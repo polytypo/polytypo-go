@@ -39,8 +39,16 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # rapid.checks is only registered by test binaries that import pgregory.net/rapid (the
+      # root package); passing it to `go test ./...` fails "-rapid.checks: flag provided but not
+      # defined" on every package that doesn't. -timeout is set explicitly: the idempotency
+      # bounded-exhaustive sweeps and the concurrency test are slow enough under -race that the
+      # unset default (10m) is not reliable headroom on every runner.
       - name: Test
-        run: go test ./... -race -rapid.checks=1000
+        run: go test ./... -race -timeout=15m
+
+      - name: Test (root package, higher rapid.checks)
+        run: go test . -race -timeout=15m -rapid.checks=1000
 
       - name: Staticcheck
         uses: dominikh/staticcheck-action@672a31696676d1592844bf0164b3bbfd855a4d50 # v1.4.1
