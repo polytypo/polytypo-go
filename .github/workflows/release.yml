@@ -1,0 +1,58 @@
+name: Release
+
+# Tag-triggered only. Go modules are not uploaded anywhere: go get / pkg.go.dev index
+# automatically off a pushed git tag via the public module proxy (proxy.golang.org) -- there is
+# no npm/PyPI-style publish step, no registry credentials, no Trusted Publishing setup, and no
+# bootstrap chicken-and-egg problem for a brand-new module path. This workflow's only jobs are to
+# (a) verify the two-tag release contract (the canonical spec tag exists in polytypo/polytypo)
+# and the full test suite is green at the tagged commit, and (b) optionally ping the module proxy
+# so the new version is indexed immediately rather than waiting for the first real `go get`.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify release gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.0.0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6.0.0
+        with:
+          go-version: stable
+
+      - name: Verify canonical spec tag exists in polytypo/polytypo
+        run: go run ./scripts/verify-spec-tag
+
+      - name: Format check (gofmt)
+        run: |
+          fmt_out="$(gofmt -l .)"
+          if [ -n "$fmt_out" ]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "$fmt_out"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./... -race -rapid.checks=1000
+
+      # A pushed tag's literal value is passed through a step-level env var and referenced as a
+      # quoted shell variable, never interpolated with `${{ }}` directly into `run:` shell text.
+      - name: Request immediate pkg.go.dev / module-proxy indexing
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          curl -sf "https://proxy.golang.org/github.com/polytypo/polytypo-go/@v/${RELEASE_TAG}.info" \
+            || echo "Proxy indexing request failed or is still propagating -- not fatal, the module still resolves via the first real 'go get'."
