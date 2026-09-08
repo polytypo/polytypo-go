@@ -1,7 +1,7 @@
-// Package polytypo is locale-correct microtypography: quotes, dashes, ellipses, apostrophes,
-// symbols and no-break spaces, from a spec shared across every polytypo runtime
-// (github.com/polytypo/polytypo). See spec/CONFORMANCE.md there for exactly what this runtime
-// implements.
+// Package polytypo normalizes typography across languages: locale-correct quotes, dashes,
+// ellipses, apostrophes, symbols and no-break spaces, from a spec shared across every polytypo
+// runtime (github.com/polytypo/polytypo). See spec/CONFORMANCE.md there for exactly what this
+// runtime implements.
 //
 // Unlike the JS and Python ports, this package has no per-mode subpath split
 // (polytypo/text, polytypo/html, polytypo/markdown): Go's linker already dead-code-eliminates
