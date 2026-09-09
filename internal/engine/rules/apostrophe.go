@@ -12,9 +12,10 @@ import (
 // sees only the U+0027 marks quotes declined to claim. Every edit is one code point replacing
 // one code point; the rule never inserts, never deletes, and never touches U+2019 itself.
 //
-// As of spec 0.5.0 this rule additionally skips a small, precisely-defined set of positions
-// entirely (apostrophe.md 3.4) — the shared ambiguous-medial-span preserve set,
-// qaComputePreserveIndices in quote_ambiguity.go — rather than applying its case ladder to them.
+// As of spec 1.1.0 this rule reads no locale data and skips no position (apostrophe.md 3.4).
+// Spec 0.5.0's preserve set existed to stop the case ladder from converting the marks quotes had
+// vetoed; conversion is now the specified outcome for exactly those marks — cases 4 and 3 are
+// what turn `rock 'n' roll` into `rock ’n’ roll`, in every locale.
 
 const apoSQ = rune(0x27)
 const apoRightSingle = rune(0x2019)
@@ -123,18 +124,10 @@ func init() {
 
 func scanApostrophe(cp []rune, locale spec.LocaleData, ctx engine.RuleContext) []engine.Edit {
 	n := len(cp)
-	// apostrophe.md 3.4, spec 0.5.0: positions in the shared ambiguous-medial-span preserve set
-	// (an ambiguous shape with no cited elisionIdioms match) are skipped entirely, before
-	// left/right are even read — this rule's own case ladder would otherwise curl both marks of
-	// e.g. `rock 'n' roll` independently and silently defeat quotes' deliberate veto.
-	preserve := qaComputePreserveIndices(cp, locale.Quotes.ElisionIdioms)
 
 	var edits []engine.Edit
 	for i := 0; i < n; i++ {
 		if cp[i] != apoSQ {
-			continue
-		}
-		if _, ok := preserve[i]; ok {
 			continue
 		}
 
