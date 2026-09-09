@@ -5,30 +5,35 @@ import (
 	spec "github.com/polytypo/polytypo-go/internal/spec"
 )
 
-// Shared ambiguous-medial-span predicate — spec/rules/quotes.md 3.2 ("Listed elision veto" and
-// "General ambiguous-medial-span veto") and spec/rules/apostrophe.md 3.4. One definition, used
-// identically by quotes.go and apostrophe.go, so the two rules cannot drift apart on what counts
-// as ambiguous (mirrors ref-js's src/rules/quote-ambiguity.ts and ref-python's
-// _quote_ambiguity.py).
+// The two decline-only predicates quotes.go reads — spec/rules/quotes.md 3.2 ("Listed elision
+// veto" and "Universal medial-`n` elision veto"). Both have the same outcome: the marks survive
+// pass 2 unmatched and apostrophe converts each by its own case ladder (apostrophe.md 3.3 cases
+// 4 then 3), giving `rock 'n' roll` → `rock ’n’ roll`. Mirrors ref-js's
+// src/rules/quote-ambiguity.ts and ref-python's _quote_ambiguity.py.
 //
-// The shape (quotes.md 3.2, "General ambiguous-medial-span veto"): a pair of straight ASCII
-// single quotes (U+0027) enclosing 1-3 LETTER code points, with at least one INLINE-SPACE code
-// point immediately outside each mark — `rock 'n' roll`, `She chose 'A' today`. Only the single
-// adjacent code point is tested on each side; a longer run of inline spaces further out does not
-// invalidate the match (quotes.md 3.2's "at least one, deliberately not exactly one").
+// The universal shape (quotes.md 3.2, spec 1.1.0): a pair of NARROW marks enclosing exactly one
+// code point, U+006E `n` or U+004E `N`, with at least one INLINE-SPACE code point immediately
+// outside each mark. Only the single adjacent code point is tested on each side; a longer run of
+// inline spaces further out does not invalidate the match (quotes.md 3.2's "at least one,
+// deliberately not exactly one").
 //
-// Without a matching quotes.elisionIdioms entry, neither quotes nor apostrophe may touch either
-// mark: quotes must not pair them as an ordinary quotation, and apostrophe's own case ladder
-// (which would otherwise independently read the left mark as a leading elision and the right one
-// as a trailing possessive/elision, apostrophe.md 3.3 cases 3/4) must not convert them either.
+// Only quotes.go consumes this file. Spec 0.5.0 had apostrophe.go consume it too, through a
+// preserve set withdrawn in 1.1.0 (apostrophe.md 3.4) — conversion is now the specified outcome
+// for every position either predicate vetoes.
 
-// qaStraightApostrophe is U+0027 — the GENERAL ambiguous-shape veto's own trigger glyph. An
-// already-curly U+2018/U+2019 pair is out of this predicate's scope by construction.
-const qaStraightApostrophe = rune(0x27)
+// qaLowerN and qaUpperN are quotes.md 3.2's one enclosed code point, in either case.
+const (
+	qaLowerN = rune(0x6E)
+	qaUpperN = rune(0x4E)
+)
 
-// qaNarrow is quotes.md 3.1 NARROW — every glyph an elision idiom's marks may appear as across
-// pipeline passes (straight, or already curled by an earlier pass). Shared with quotes.go so the
-// two rules cannot define two slightly different NARROW sets.
+// qaNarrow is quotes.md 3.1 NARROW — every glyph an elision mark may appear as across pipeline
+// passes (straight, or already curled by an earlier pass). Shared with quotes.go so the two rules
+// cannot define two slightly different NARROW sets. For the universal medial-n veto, matching the
+// whole class is an IDEMPOTENCY obligation rather than a preference: its marks are converted to
+// U+2019 by apostrophe, so a straight-ASCII-only predicate would not recognise its own output and
+// pass 2 would pair `rock ’n’ roll` as an ordinary NARROW quotation on the next run — measured as
+// `rock «n» roll` in ru and `rock ”n” roll` in fi.
 var qaNarrow = map[rune]bool{
 	0x27:   true,
 	0x2018: true,
@@ -51,11 +56,6 @@ var qaInlineSpace = map[rune]bool{
 	0x2009: true,
 	0x200A: true,
 }
-
-const (
-	qaMinEnclosed = 1
-	qaMaxEnclosed = 3
-)
 
 // qaAt returns cp[i], or engine.None if i is out of bounds — the spec's own boundary value.
 func qaAt(cp []rune, i int) rune {
@@ -223,19 +223,19 @@ func qaComputeIdiomMatchedIndices(cp []rune, idioms []spec.ElisionIdiom) map[int
 	return vetoed
 }
 
-// qaComputeAmbiguousShapeIndices is the general ambiguous-medial-span shape, locale-independent
-// (quotes.md 3.2, spec 0.5.0): a pair of straight ASCII single quotes (U+0027 only) enclosing
-// 1-3 LETTER code points, with at least one INLINE-SPACE code point immediately outside each
-// mark. Both mark positions are returned for every match. A superset of
-// qaComputeIdiomMatchedIndices's output whenever an idiom's elided field is itself 1-3 letters
-// (true of every idiom shipped so far), but computed independently rather than assumed, since a
-// future idiom's elided field is not required to be that short.
+// qaComputeAmbiguousShapeIndices is the universal medial-n elision shape, locale-independent
+// (quotes.md 3.2, spec 1.1.0): a pair of NARROW marks enclosing exactly one code point, U+006E or
+// U+004E, with at least one INLINE-SPACE code point immediately outside each mark. Both mark
+// positions are returned for every match. A superset of qaComputeIdiomMatchedIndices's output for
+// every idiom whose elided field is a single n (true of every idiom shipped so far), but computed
+// independently rather than assumed, since a future idiom's elided field is not required to be
+// that short.
 func qaComputeAmbiguousShapeIndices(cp []rune) map[int]struct{} {
 	ambiguous := map[int]struct{}{}
 	n := len(cp)
 
 	for i := 0; i < n; i++ {
-		if qaAt(cp, i) != qaStraightApostrophe {
+		if !qaNarrow[qaAt(cp, i)] {
 			continue
 		}
 
@@ -244,16 +244,13 @@ func qaComputeAmbiguousShapeIndices(cp []rune) map[int]struct{} {
 			continue
 		}
 
-		k := 0
-		for k < qaMaxEnclosed && engine.IsLetter(qaAt(cp, i+1+k)) {
-			k++
-		}
-		if k < qaMinEnclosed {
+		enclosed := qaAt(cp, i+1)
+		if enclosed != qaLowerN && enclosed != qaUpperN {
 			continue
 		}
 
-		j := i + 1 + k
-		if qaAt(cp, j) != qaStraightApostrophe {
+		j := i + 2
+		if !qaNarrow[qaAt(cp, j)] {
 			continue
 		}
 
@@ -267,27 +264,4 @@ func qaComputeAmbiguousShapeIndices(cp []rune) map[int]struct{} {
 	}
 
 	return ambiguous
-}
-
-// qaComputePreserveIndices is the set of straight-ASCII-quote index positions that
-// apostrophe.md 3.4 requires `apostrophe` to skip byte-identically: ambiguous-shaped, but with
-// no matching cited idiom. A position with a matching idiom is not in this set — apostrophe's
-// ordinary case ladder still curls it, exactly as spec 0.4.0-0.4.1 did.
-func qaComputePreserveIndices(cp []rune, idioms []spec.ElisionIdiom) map[int]struct{} {
-	ambiguous := qaComputeAmbiguousShapeIndices(cp)
-	if len(ambiguous) == 0 {
-		return ambiguous
-	}
-	idiomMatched := qaComputeIdiomMatchedIndices(cp, idioms)
-	if len(idiomMatched) == 0 {
-		return ambiguous
-	}
-
-	preserve := map[int]struct{}{}
-	for idx := range ambiguous {
-		if _, ok := idiomMatched[idx]; !ok {
-			preserve[idx] = struct{}{}
-		}
-	}
-	return preserve
 }
