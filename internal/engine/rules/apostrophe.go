@@ -5,7 +5,7 @@ import (
 	spec "github.com/polytypo/polytypo-go/internal/spec"
 )
 
-// spec/rules/apostrophe.md (spec 0.5.0), order 50.
+// spec/rules/apostrophe.md (spec 1.2.0), order 50.
 //
 // Converts a straight U+0027 to U+2019 where it is genuinely an apostrophe: a contraction, an
 // elision, a possessive, or a decade elision. Runs immediately after `quotes` (order 40) and
@@ -15,7 +15,8 @@ import (
 // As of spec 1.1.0 this rule reads no locale data and skips no position (apostrophe.md 3.4).
 // Spec 0.5.0's preserve set existed to stop the case ladder from converting the marks quotes had
 // vetoed; conversion is now the specified outcome for exactly those marks — cases 4 and 3 are
-// what turn `rock 'n' roll` into `rock ’n’ roll`, in every locale.
+// what turn `rock 'n' roll` into `rock ’n’ roll`, in every locale. Case 3a (spec 1.2.0) reads
+// no locale data either: OPENQUOTE is a fixed set.
 
 const apoSQ = rune(0x27)
 const apoRightSingle = rune(0x2019)
@@ -80,6 +81,18 @@ func apoIsSpacelike(cp rune) bool {
 	}
 }
 
+// apoIsOpenquote is apostrophe.md 3.1 OPENQUOTE (spec 1.2.0): the quotation glyphs of
+// apoOpenish, without its brackets and dashes — `f'(x)` is a prime and must stay as typed.
+// engine.Marker is not a member: case 3 already accepts it through apoCloseish (modes.md 3.3).
+func apoIsOpenquote(cp rune) bool {
+	switch cp {
+	case 0xAB, 0x2018, 0x201A, 0x201B, 0x201C, 0x201E, 0x201F, 0x2039:
+		return true
+	default:
+		return false
+	}
+}
+
 func apoIsDigit(cp rune) bool {
 	return cp >= 0x30 && cp <= 0x39
 }
@@ -105,6 +118,11 @@ func apoIsApostrophe(left, right rune) bool {
 	// trailing mark).
 	if left != engine.None && engine.IsLetter(left) &&
 		(right == engine.None || apoIsSpacelike(right) || apoCloseish[right]) {
+		return true
+	}
+	// Case 3a — elision before a quotation: `d'« urine »`, `l'“idea”`, `dell'‘arte’`; also the
+	// de-DE possessive `„Hans'“`, whose closing U+201C is not in CLOSEISH.
+	if engine.IsLetter(left) && apoIsOpenquote(right) {
 		return true
 	}
 	// Case 4 — leading elision: `'90s`, `'tis`, `'em`, `'n'` (the leading mark). The replacement
