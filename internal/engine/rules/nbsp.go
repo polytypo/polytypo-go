@@ -59,13 +59,11 @@ func nbIsAlnum(cp rune) bool {
 // nbIsBreak is BREAK (nbsp.md 3.1), including engine.LineMarker -- a member of BREAK for every
 // rule everywhere (modes.md 3.2).
 //
-// engine.Marker is deliberately NOT a member here, and nbIsOpenish/nbIsCloseish below do not add
-// it either. modes.md 3.3's table says nbsp's OPENISH/CLOSEISH include the span-boundary Marker,
-// the same way quotes' and apostrophe's do -- but the JS reference implementation's own
-// isBreak/isOpenish/isCloseish never test for MARKER, only LINE_MARKER via isBreak. That is a
-// documented, preserved discrepancy (tracked, not resolved, in docs/ROADMAP.md), carried forward
-// here unchanged rather than "corrected" against the table, for cross-runtime consistency with
-// the already-shipped JS and Python ports.
+// engine.Marker is NOT a member here. Since spec 1.2.0 it is a member of this rule's CLOSEISH and
+// not of its OPENISH (nbsp.md 3.1, 7 item 12; modes.md 3.3): CLOSEISH membership lets N1/N2's
+// right-context guard put back the space `spaces` deleted in `<strong>gel :</strong>`, while
+// OPENISH membership would make the quote-glyph guard decline `<em>non</em> !`. The fixture
+// ru-nbsp-span-boundary-not-openish-short-word pins the OPENISH half.
 func nbIsBreak(cp rune) bool {
 	switch cp {
 	case 0x0A, 0x0D, 0x0B, 0x0C, 0x85, 0x2028, 0x2029, engine.LineMarker:
@@ -240,13 +238,13 @@ func prepareNbsp(locale spec.LocaleData) nbPrepared {
 }
 
 // nbIsOpenish / nbIsCloseish are OPENISH / CLOSEISH (nbsp.md 3.1): the ASCII brackets plus every
-// locale quote glyph. See nbIsBreak's comment for why MARKER is not a member here.
+// locale quote glyph. engine.Marker is a member of CLOSEISH only; see nbIsBreak's comment.
 func nbIsOpenish(prep nbPrepared, cp rune) bool {
 	return nbContains(prep.opens, cp)
 }
 
 func nbIsCloseish(prep nbPrepared, cp rune) bool {
-	return nbContains(prep.closes, cp)
+	return cp == engine.Marker || nbContains(prep.closes, cp)
 }
 
 func nbIsMark(prep nbPrepared, cp rune) bool {

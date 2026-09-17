@@ -132,11 +132,20 @@ func isEmptyBracketGuarded(left, right rune) bool {
 // e indexes right in the input array, and the run is measured there. Measuring it after any
 // edit had been applied would break the Chicago spaced ellipsis "Hello . . .", where every dot
 // is a lone dot at decision time and all three spaces must still strip.
+//
+// The word-start clause (spec 1.2.0): a single dot followed directly by a letter or an ASCII
+// digit starts a token — ".NET", ".gitignore", ".5" — so "Use .NET, .NET Core" keeps both
+// spaces. The accepted cost is "end .Next sentence", which keeps its stray space. A span boundary
+// marker after the dot is neither a letter nor a digit, so the space before it still strips.
 func isLoneDot(cp []rune, e int) bool {
 	if spacesAt(cp, e) != spFullStop {
 		return true
 	}
-	return !isDotlike(spacesAt(cp, e+1))
+	next := spacesAt(cp, e+1)
+	if engine.IsLetter(next) || isDigitASCII(next) {
+		return false
+	}
+	return !isDotlike(next)
 }
 
 func isDigitASCII(cp rune) bool {
