@@ -76,3 +76,41 @@ func RunRules(cp []rune, plan []string, localeData spec.LocaleData, ctx RuleCont
 	}
 	return current, nil
 }
+
+// RunRulesRecording is RunRules, keeping the edits instead of discarding them (analyze.md
+// section 1: same pipeline, same order, reporting rather than applying). The origin map travels
+// alongside the array so every change comes back in input coordinates, and filterEdits is the
+// hook the span-runner needs for modes.md 3.4's boundary filters — text mode passes nil and gets
+// the identity.
+func RunRulesRecording(
+	cp []rune,
+	plan []string,
+	localeData spec.LocaleData,
+	ctx RuleContext,
+	origin []int,
+	inputLength int,
+	filterEdits func([]rune, []Edit) []Edit,
+) ([]Change, error) {
+	current := cp
+	currentOrigin := origin
+	changes := make([]Change, 0)
+	for _, ruleID := range plan {
+		fn := GetRule(ruleID)
+		produced := fn(current, localeData, ctx)
+		edits := produced
+		if filterEdits != nil {
+			edits = filterEdits(current, produced)
+		}
+		if len(edits) == 0 {
+			continue
+		}
+		changes = append(changes, RecordChanges(current, edits, currentOrigin, inputLength, ruleID)...)
+		currentOrigin = ApplyEditsToOrigin(currentOrigin, edits)
+		next, err := ApplyEdits(current, edits, ruleID)
+		if err != nil {
+			return nil, err
+		}
+		current = next
+	}
+	return changes, nil
+}

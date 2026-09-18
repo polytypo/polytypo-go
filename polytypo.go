@@ -44,6 +44,10 @@ const (
 	CodeMalformedInput      = engine.CodeMalformedInput
 )
 
+// Change is one entry of Analyze's result: a rule id, code-point offsets into the input, and the
+// text on both sides of that one edit (spec/rules/analyze.md section 2).
+type Change = engine.Change
+
 // Options configures Transform. Matches docs/ARCHITECTURE.md section 7 exactly across every
 // runtime, with idiomatic Go naming.
 type Options struct {
@@ -160,4 +164,94 @@ func runMarkdown(input string, opts Options) (string, error) {
 	}
 	ctx := engine.RuleContext{Mode: "markdown", Dialect: opts.Dialect, Locale: resolvedLocale}
 	return modes.RunOverSpans(engine.ToCodePoints(input), spans, plan, localeData, ctx)
+}
+
+// Analyze runs the same pipeline as Transform and reports what it would do instead of doing it
+// (spec/rules/analyze.md). Offsets are code-point offsets into input in every mode — into the
+// document, in "html" and "markdown" mode, not into a span.
+//
+// What it guarantees: the list is empty exactly when Transform would return the input unchanged,
+// every RuleID was enabled for the call, and every offset is inside the input. What it does not:
+// the list is a report, not a patch — two rules may touch the same original range, so replaying
+// it is not guaranteed to reproduce Transform's output. Call Transform for the text (analyze.md
+// sections 4 and 5).
+//
+// Pure and goroutine-safe on the same terms as Transform.
+func Analyze(input string, opts Options) (changes []Change, err error) {
+	// The same conversion of a locale-data invariant panic into a returned error that Transform
+	// does, and for the same reason: it must never surface as a crash to a caller.
+	defer func() {
+		if r := recover(); r != nil {
+			if e, ok := r.(*engine.Error); ok {
+				changes, err = nil, e
+				return
+			}
+			panic(r)
+		}
+	}()
+
+	mode, err := resolveMode(opts.Mode)
+	if err != nil {
+		return nil, err
+	}
+
+	switch mode {
+	case "text":
+		if opts.Dialect != "" {
+			return nil, engine.NewError(engine.CodeInvalidDialect, `"dialect" is only valid when mode is "markdown"`)
+		}
+		return analyzeText(input, opts)
+	case "html":
+		if opts.Dialect != "" {
+			return nil, engine.NewError(engine.CodeInvalidDialect, `"dialect" is only valid when mode is "markdown"`)
+		}
+		return analyzeHTML(input, opts)
+	default: // "markdown"
+		return analyzeMarkdown(input, opts)
+	}
+}
+
+func analyzeText(input string, opts Options) ([]Change, error) {
+	_, localeData, plan, err := engine.Prepare(opts.Locale, opts.Rules)
+	if err != nil {
+		return nil, err
+	}
+	cp := engine.ToCodePoints(input)
+	origin := make([]int, len(cp))
+	for i := range cp {
+		origin[i] = i
+	}
+	ctx := engine.RuleContext{Mode: "text", Locale: opts.Locale}
+	return engine.RunRulesRecording(cp, plan, localeData, ctx, origin, len(cp), nil)
+}
+
+func analyzeHTML(input string, opts Options) ([]Change, error) {
+	resolvedLocale, localeData, plan, err := engine.Prepare(opts.Locale, opts.Rules)
+	if err != nil {
+		return nil, err
+	}
+	spans, err := modes.HTMLSpans(input)
+	if err != nil {
+		return nil, err
+	}
+	ctx := engine.RuleContext{Mode: "html", Locale: resolvedLocale}
+	return modes.AnalyzeOverSpans(engine.ToCodePoints(input), spans, plan, localeData, ctx)
+}
+
+func analyzeMarkdown(input string, opts Options) ([]Change, error) {
+	// Validation order is public, tested behaviour and is shared with runMarkdown: rules, then
+	// locale, then dialect/parsing (analyze.md section 4, A1).
+	resolvedLocale, localeData, plan, err := engine.Prepare(opts.Locale, opts.Rules)
+	if err != nil {
+		return nil, err
+	}
+	if err := modes.ResolveMarkdownDialect(opts.Dialect); err != nil {
+		return nil, err
+	}
+	spans, err := modes.MarkdownSpans(input)
+	if err != nil {
+		return nil, err
+	}
+	ctx := engine.RuleContext{Mode: "markdown", Dialect: opts.Dialect, Locale: resolvedLocale}
+	return modes.AnalyzeOverSpans(engine.ToCodePoints(input), spans, plan, localeData, ctx)
 }
