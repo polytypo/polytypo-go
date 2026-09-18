@@ -31,6 +31,13 @@ const (
 	nbSquareClose = rune(0x5D)
 	nbBraceClose  = rune(0x7D)
 
+	// nbMaxCharacterReferenceName is the longest HTML named reference (31 code points,
+	// "CounterClockwiseContourIntegral") plus one, bounding the guard's left walk.
+	nbSemicolon                 = rune(0x3B)
+	nbAmpersand                 = rune(0x26)
+	nbHash                      = rune(0x23)
+	nbMaxCharacterReferenceName = 32
+
 	nbEnDash   = rune(0x2013)
 	nbEmDash   = rune(0x2014)
 	nbEllipsis = rune(0x2026)
@@ -335,6 +342,29 @@ func nbLongestMatch(patterns [][]rune, cp []rune, a int, matcher nbMatcher) ([]r
 
 // nbPunctuationSubRule is N1 (3.3, beforePunctuation -> U+00A0) and N2 (3.4,
 // narrowBeforePunctuation -> U+202F): identical shape with target/other exchanged.
+// nbEndsCharacterReference reports whether the code points left of this ";" have the shape of a
+// character reference: a bounded left walk over ASCII alphanumerics, optionally one "#", then "&".
+// Shape, not the HTML named-reference table -- declining on "&notaname;" costs nothing, and no
+// runtime carries thousands of entries for it. The bound is the longest named reference plus one.
+func nbEndsCharacterReference(cp []rune, i int) bool {
+	j := i - 1
+	for j >= 0 && nbIsASCIIAlphanumeric(cp[j]) {
+		j--
+	}
+	length := i - 1 - j
+	if length < 1 || length > nbMaxCharacterReferenceName {
+		return false
+	}
+	if j >= 0 && cp[j] == nbHash {
+		j--
+	}
+	return j >= 0 && cp[j] == nbAmpersand
+}
+
+func nbIsASCIIAlphanumeric(c rune) bool {
+	return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+}
+
 func nbPunctuationSubRule(cp []rune, prep nbPrepared, claims []*engine.Edit, marks []rune, target, other rune) {
 	if len(marks) == 0 {
 		return
@@ -365,7 +395,13 @@ func nbPunctuationSubRule(cp []rune, prep nbPrepared, claims []*engine.Edit, mar
 		if left != engine.None && nbIsSpaceLike(left) && nbIsOpenish(prep, nbspAt(cp, i-2)) {
 			continue
 		}
-		// Step 4.
+		// Step 4 (spec 1.3.0) -- character-reference guard. text mode has no markup concept, so
+		// a locale listing ";" used to insert before the ";" that *ends* a reference and
+		// "Bonjour&#160;: oui" stopped being what it was (nbsp.md 3.3 step 4).
+		if cp[i] == nbSemicolon && nbEndsCharacterReference(cp, i) {
+			continue
+		}
+		// Step 5.
 		if left == target {
 			continue
 		}
