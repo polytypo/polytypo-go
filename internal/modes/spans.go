@@ -177,3 +177,21 @@ func SplitOnMarker(cp []rune, expected int) ([][]rune, error) {
 	}
 	return pieces, nil
 }
+
+// OriginOfSpans returns the origin map for ConcatenateSpans (analyze.md section 2): for every
+// code point of the joined array, the code-point offset of the character it came from IN THE
+// DOCUMENT, and engine.NoOrigin for the markers, which came from nowhere. A Span's bounds are
+// already code-point offsets (a mode adapter converts its parser's byte offsets away before
+// constructing one), so no coordinate conversion belongs here.
+func OriginOfSpans(spans []Span) []int {
+	origin := make([]int, 0)
+	for i, span := range spans {
+		if i > 0 {
+			origin = append(origin, engine.NoOrigin)
+		}
+		for offset := span.Start; offset < span.End; offset++ {
+			origin = append(origin, offset)
+		}
+	}
+	return origin
+}

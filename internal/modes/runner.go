@@ -72,3 +72,28 @@ func RunOverSpans(sourceCP []rune, spans []Span, plan []string, localeData spec.
 	out = append(out, sourceCP[cursor:]...)
 	return string(out), nil
 }
+
+// AnalyzeOverSpans is RunOverSpans, reporting instead of applying (analyze.md section 1). The
+// span table supplies the origin map, so every change comes back in DOCUMENT coordinates —
+// analyze.md section 6 names a runtime that reports span-local offsets here as the mistake that
+// passes every text-mode test.
+func AnalyzeOverSpans(sourceCP []rune, spans []Span, plan []string, localeData spec.LocaleData, ctx engine.RuleContext) ([]engine.Change, error) {
+	normalized, err := NormalizeSpans(spans)
+	if err != nil {
+		return nil, err
+	}
+	if len(normalized) == 0 {
+		return []engine.Change{}, nil
+	}
+	return engine.RunRulesRecording(
+		ConcatenateSpans(sourceCP, normalized),
+		plan,
+		localeData,
+		ctx,
+		OriginOfSpans(normalized),
+		len(sourceCP),
+		func(current []rune, edits []engine.Edit) []engine.Edit {
+			return FilterBoundaryEdits(current, edits, SpanRangesOf(current))
+		},
+	)
+}

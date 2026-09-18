@@ -83,6 +83,26 @@ package is the better fit for Go. Importing this package does pull in `golang.or
 and `github.com/yuin/goldmark` transitively, regardless of which mode a given caller actually
 uses.
 
+`Analyze` runs the same pipeline and reports what it would do instead of doing it — one record
+per edit, each with the rule that made it and code-point offsets into the input you passed (into
+the **document**, in `html` and `markdown` mode, not into a span):
+
+```go
+changes, err := polytypo.Analyze(`Wait... "really"?`, polytypo.Options{Locale: "en-US"})
+// changes == []polytypo.Change{
+//     {RuleID: "ellipsis", Start: 4, End: 7, Before: "...", After: "…"},
+//     {RuleID: "quotes", Start: 8, End: 9, Before: `"`, After: "“"},
+//     {RuleID: "quotes", Start: 15, End: 16, Before: `"`, After: "”"},
+// }
+```
+
+Offsets are code points, not bytes: in `😀 and "this"` the opening quotation mark is reported at
+6, where `strings.Index` would say 9. It is a report, not a patch. The list is empty exactly when
+`Transform` would return the input unchanged, and every `RuleID` is a rule that was enabled for
+that call — but two rules may touch the same original range (French `spaces` deletes the space
+before `:` and `nbsp` puts a no-break one back), so replaying the list is not guaranteed to
+reproduce the output. Call `Transform` for the text. Full contract: `spec/rules/analyze.md`.
+
 ### Errors
 
 Every error `Transform` returns is a `*polytypo.Error` carrying one of seven stable codes — check
