@@ -94,6 +94,105 @@ func dshIsDashUnion(cp rune) bool {
 }
 
 // dshIsDigit is dashes.md 3.1 DIGIT: ASCII only, deliberately -- see ranges.md 7.1.
+// dshIsClosedUpSymbol is ranges.md 3.2a's CLOSED-SYMBOL (spec 1.3.0): the symbols conventionally
+// written closed up to a number. A literal code-point set, never a Unicode category test -- a
+// category makes the verdict depend on which Unicode version a runtime was built against, and
+// the five runtimes must agree. The currency part is the U+20A0-U+20CF block by its own bounds,
+// not the subset assigned in some Unicode version: the assigned subset drifts between releases,
+// block bounds do not.
+func dshIsClosedUpSymbol(cp rune) bool {
+	switch {
+	case cp == 0x0024: // DOLLAR SIGN
+		return true
+	case cp >= 0x00A2 && cp <= 0x00A5: // CENT, POUND, CURRENCY, YEN
+		return true
+	case cp >= 0x20A0 && cp <= 0x20CF: // Currency Symbols block, by its bounds
+		return true
+	case cp == 0x0025 || cp == 0x2030 || cp == 0x2031: // PERCENT, PER MILLE, PER TEN THOUSAND
+		return true
+	case cp == 0x00B0: // DEGREE SIGN
+		return true
+	default:
+		return false
+	}
+}
+
+// rangeFlanks is a token's flanks after ranges.md 3.2a's closed-up-symbol walk, with the digit
+// runs the guards and the replacement then read. left/right are L'/R'; outerLeft/outerRight are
+// the matched outer symbols' indices, or -1.
+type rangeFlanks struct {
+	left, right int
+	a, b        int
+	outerLeft   int
+	outerRight  int
+}
+
+// rngFlanks answers ranges.md 3.2/3.2a: is this token a range candidate, and where are its digit
+// runs? ok=false means it is not one, which is the signal that the token belongs to `dashes`.
+//
+// Both sides are decided from the ORIGINAL left/right, simultaneously; a side consumes a
+// closed-up symbol only when the opposite member repeats the same code point. An unmatched symbol
+// leaves the flank a non-DIGIT, so `$15-\u20ac20` and `15-$20` are not candidates and do not
+// change hands.
+func rngFlanks(cp []rune, left, right int) (rangeFlanks, bool) {
+	n := len(cp)
+	innerRight, hasInnerRight := rune(0), false
+	if left >= 0 && right >= 0 && right < n && dshIsClosedUpSymbol(cp[right]) &&
+		right+1 < n && dshIsDigit(cp[right+1]) {
+		innerRight, hasInnerRight = cp[right], true
+	}
+	innerLeft, hasInnerLeft := rune(0), false
+	if left > 0 && left < n && dshIsClosedUpSymbol(cp[left]) && dshIsDigit(cp[left-1]) {
+		innerLeft, hasInnerLeft = cp[left], true
+	}
+
+	l, r := left, right
+	if hasInnerLeft {
+		l = left - 1
+	}
+	if hasInnerRight {
+		r = right + 1
+	}
+	if l < 0 || l >= n || r < 0 || r >= n || !dshIsDigit(cp[l]) || !dshIsDigit(cp[r]) {
+		return rangeFlanks{}, false
+	}
+
+	a := l
+	for a > 0 && dshIsDigit(cp[a-1]) {
+		a--
+	}
+	b := r
+	for b+1 < n && dshIsDigit(cp[b+1]) {
+		b++
+	}
+
+	outerLeft, outerRight := -1, -1
+	if hasInnerRight {
+		outerLeft = dshEffectiveIndex(cp, a-1, -1)
+		if outerLeft < 0 || cp[outerLeft] != innerRight {
+			return rangeFlanks{}, false
+		}
+	}
+	if hasInnerLeft {
+		outerRight = dshEffectiveIndex(cp, b+1, 1)
+		if outerRight < 0 || cp[outerRight] != innerLeft {
+			return rangeFlanks{}, false
+		}
+	}
+
+	return rangeFlanks{left: l, right: r, a: a, b: b, outerLeft: outerLeft, outerRight: outerRight}, true
+}
+
+// dshSkipClosedUpSymbol makes T1's reach transparent to one CLOSED-SYMBOL on either end of a
+// digit run (spec 1.3.0): the run it protects may be a range member carrying an outer symbol.
+func dshSkipClosedUpSymbol(cp []rune, from, step int) int {
+	i := dshEffectiveIndex(cp, from, step)
+	if i < 0 || !dshIsClosedUpSymbol(cp[i]) {
+		return from
+	}
+	return i + step
+}
+
 func dshIsDigit(cp rune) bool {
 	return cp >= dshDigitZero && cp <= dshDigitNine
 }
@@ -249,12 +348,21 @@ func dshEffectiveNeighbour(cp []rune, from, step int) rune {
 func dshIsSpacingTransitionBlocked(cp []rune, left, right int) bool {
 	n := len(cp)
 
+	// Spec 1.3.0, position p1: step over a CLOSED-SYMBOL sitting between the token and the run.
+	if left >= 0 && left < n && dshIsClosedUpSymbol(cp[left]) && left > 0 && dshIsDigit(cp[left-1]) {
+		left--
+	}
+	if right >= 0 && right < n && dshIsClosedUpSymbol(cp[right]) && right+1 < n && dshIsDigit(cp[right+1]) {
+		right++
+	}
+
 	if left >= 0 && left < n && dshIsDigit(cp[left]) {
 		d := left
 		for d > 0 && dshIsDigit(cp[d-1]) {
 			d--
 		}
-		i1 := dshEffectiveIndex(cp, d-1, -1)
+		// Position p2: and over one at the far end of the run.
+		i1 := dshEffectiveIndex(cp, dshSkipClosedUpSymbol(cp, d-1, -1), -1)
 		one := engine.None
 		if i1 >= 0 {
 			one = cp[i1]
@@ -276,7 +384,7 @@ func dshIsSpacingTransitionBlocked(cp []rune, left, right int) bool {
 		for d+1 < n && dshIsDigit(cp[d+1]) {
 			d++
 		}
-		i1 := dshEffectiveIndex(cp, d+1, 1)
+		i1 := dshEffectiveIndex(cp, dshSkipClosedUpSymbol(cp, d+1, 1), 1)
 		one := engine.None
 		if i1 >= 0 {
 			one = cp[i1]
@@ -403,7 +511,10 @@ func dshFindTokens(cp []rune) []dashToken {
 		leftCp := cp[left]
 		rightCp := cp[right]
 
-		if crossedJoiner && !(dshIsDigit(leftCp) && dshIsDigit(rightCp)) {
+		// dashes.md 3.2a: re-entry across a joiner is only ever a bound range `ranges` produced
+		// on an earlier pass. Spec 1.3.0 reads that condition after the closed-up-symbol walk,
+		// so `$15<J>-<J>$20` re-enters the same way `1914<J>-<J>1918` does.
+		if _, isCandidate := rngFlanks(cp, left, right); crossedJoiner && !isCandidate {
 			continue
 		}
 		if dshIsBreak(leftCp) || dshIsBreak(rightCp) {
