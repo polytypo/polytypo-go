@@ -215,15 +215,22 @@ func TestAnalyzeReportsCodePointOffsets(t *testing.T) {
 	})
 
 	t.Run("html mode reports document offsets in a later span", func(t *testing.T) {
-		// Three spans, and the change is in the third: the two markers before it are the only
-		// code points in the joined array with no origin, so a doubled or dropped one shifts
-		// this offset and nothing in a one- or two-span document would notice.
-		input := `<p>one</p><p>two</p><p>Wait... three</p>`
+		// Three spans, a non-ASCII character before the change, and the change in the third
+		// span: the two markers are the only code points in the joined array with no origin, so
+		// a doubled or dropped one shifts this offset and nothing in a one- or two-span document
+		// would notice. `café` then puts the byte offset one ahead of the code-point offset, so
+		// a byte offset leaking out of the span adapter cannot pass this either — which is the
+		// mistake available to Go specifically.
+		input := `<p>café</p><p>two</p><p>Wait... three</p>`
 		changes := mustAnalyze(t, input, polytypo.Options{Locale: "en-US", Mode: "html"})
 		if len(changes) == 0 {
 			t.Fatal("expected a change")
 		}
-		want := len([]rune(input[:strings.Index(input, "...")]))
+		bytes := strings.Index(input, "...")
+		want := len([]rune(input[:bytes]))
+		if want != bytes-1 {
+			t.Fatalf("test premise broken: code-point offset %d, byte offset %d", want, bytes)
+		}
 		if changes[0].RuleID != "ellipsis" || changes[0].Start != want {
 			t.Fatalf("expected ellipsis at %d, got %+v", want, changes[0])
 		}
