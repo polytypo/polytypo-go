@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	wj = "⁠"
+	wj = "\u2060"
 	en = "–"
 	em = "—"
 )
