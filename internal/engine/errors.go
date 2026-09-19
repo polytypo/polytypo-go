@@ -15,6 +15,9 @@ const (
 	CodeMalformedLocaleData ErrorCode = "POLYTYPO_MALFORMED_LOCALE_DATA"
 	CodeRuleContract        ErrorCode = "POLYTYPO_RULE_CONTRACT"
 	CodeMalformedInput      ErrorCode = "POLYTYPO_MALFORMED_INPUT"
+	// CodeInvalidOption is spec 1.3.0 and deliberately general: every option added from 1.3.0
+	// on shares it, while Mode and Dialect keep their own because callers branch on them.
+	CodeInvalidOption ErrorCode = "POLYTYPO_INVALID_OPTION"
 )
 
 // Error is the only error type this module ever returns. It is defined here, the lowest layer

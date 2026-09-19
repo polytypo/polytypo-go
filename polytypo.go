@@ -42,6 +42,9 @@ const (
 	CodeMalformedLocaleData = engine.CodeMalformedLocaleData
 	CodeRuleContract        = engine.CodeRuleContract
 	CodeMalformedInput      = engine.CodeMalformedInput
+	// CodeInvalidOption is spec 1.3.0: an option's value is outside its permitted set, for an
+	// option with no more specific code. The first such option is NarrowNbsp.
+	CodeInvalidOption = engine.CodeInvalidOption
 )
 
 // Change is one entry of Analyze's result: a rule id, code-point offsets into the input, and the
@@ -64,6 +67,11 @@ type Options struct {
 	// default-off rule in (only "ranges" defaults off). Absence of a key always means "use that
 	// rule's own default," never "off."
 	Rules map[string]bool
+	// NarrowNbsp is "narrow" (the default, also the zero value) or "nbsp". "nbsp" makes the
+	// engine emit U+00A0 everywhere it would emit U+202F — the narrow no-break space many common
+	// faces do not carry (nbsp.md 3.1a). It moves the rule's target rather than post-processing
+	// the output, so the result stays a fixed point. Any other value returns CodeInvalidOption.
+	NarrowNbsp string
 }
 
 func resolveMode(mode string) (string, error) {
@@ -121,12 +129,16 @@ func Transform(input string, opts Options) (out string, err error) {
 }
 
 func runText(input string, opts Options) (string, error) {
+	narrowTarget, err := engine.ResolveNarrowTarget(opts.NarrowNbsp)
+	if err != nil {
+		return "", err
+	}
 	_, localeData, plan, err := engine.Prepare(opts.Locale, opts.Rules)
 	if err != nil {
 		return "", err
 	}
 	cp := engine.ToCodePoints(input)
-	ctx := engine.RuleContext{Mode: "text", Locale: opts.Locale}
+	ctx := engine.RuleContext{Mode: "text", Locale: opts.Locale, NarrowTarget: narrowTarget}
 	result, err := engine.RunRules(cp, plan, localeData, ctx)
 	if err != nil {
 		return "", err
@@ -135,6 +147,10 @@ func runText(input string, opts Options) (string, error) {
 }
 
 func runHTML(input string, opts Options) (string, error) {
+	narrowTarget, err := engine.ResolveNarrowTarget(opts.NarrowNbsp)
+	if err != nil {
+		return "", err
+	}
 	resolvedLocale, localeData, plan, err := engine.Prepare(opts.Locale, opts.Rules)
 	if err != nil {
 		return "", err
@@ -143,14 +159,18 @@ func runHTML(input string, opts Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ctx := engine.RuleContext{Mode: "html", Locale: resolvedLocale}
+	ctx := engine.RuleContext{Mode: "html", Locale: resolvedLocale, NarrowTarget: narrowTarget}
 	return modes.RunOverSpans(engine.ToCodePoints(input), spans, plan, localeData, ctx)
 }
 
 func runMarkdown(input string, opts Options) (string, error) {
-	// Validation order is public, tested behaviour, identical to the JS/Python reference
-	// implementations: rules (an unknown rule id), then locale (an unknown locale), then
-	// dialect/parsing.
+	// Validation order is public, tested behaviour and is stated in ARCHITECTURE.md 7:
+	// mode, then narrowNbsp, then rules (an unknown rule id), then locale (an unknown locale),
+	// then dialect/parsing.
+	narrowTarget, err := engine.ResolveNarrowTarget(opts.NarrowNbsp)
+	if err != nil {
+		return "", err
+	}
 	resolvedLocale, localeData, plan, err := engine.Prepare(opts.Locale, opts.Rules)
 	if err != nil {
 		return "", err
@@ -162,7 +182,7 @@ func runMarkdown(input string, opts Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ctx := engine.RuleContext{Mode: "markdown", Dialect: opts.Dialect, Locale: resolvedLocale}
+	ctx := engine.RuleContext{Mode: "markdown", Dialect: opts.Dialect, Locale: resolvedLocale, NarrowTarget: narrowTarget}
 	return modes.RunOverSpans(engine.ToCodePoints(input), spans, plan, localeData, ctx)
 }
 
@@ -212,6 +232,10 @@ func Analyze(input string, opts Options) (changes []Change, err error) {
 }
 
 func analyzeText(input string, opts Options) ([]Change, error) {
+	narrowTarget, err := engine.ResolveNarrowTarget(opts.NarrowNbsp)
+	if err != nil {
+		return nil, err
+	}
 	_, localeData, plan, err := engine.Prepare(opts.Locale, opts.Rules)
 	if err != nil {
 		return nil, err
@@ -221,11 +245,15 @@ func analyzeText(input string, opts Options) ([]Change, error) {
 	for i := range cp {
 		origin[i] = i
 	}
-	ctx := engine.RuleContext{Mode: "text", Locale: opts.Locale}
+	ctx := engine.RuleContext{Mode: "text", Locale: opts.Locale, NarrowTarget: narrowTarget}
 	return engine.RunRulesRecording(cp, plan, localeData, ctx, origin, len(cp), nil)
 }
 
 func analyzeHTML(input string, opts Options) ([]Change, error) {
+	narrowTarget, err := engine.ResolveNarrowTarget(opts.NarrowNbsp)
+	if err != nil {
+		return nil, err
+	}
 	resolvedLocale, localeData, plan, err := engine.Prepare(opts.Locale, opts.Rules)
 	if err != nil {
 		return nil, err
@@ -234,13 +262,18 @@ func analyzeHTML(input string, opts Options) ([]Change, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx := engine.RuleContext{Mode: "html", Locale: resolvedLocale}
+	ctx := engine.RuleContext{Mode: "html", Locale: resolvedLocale, NarrowTarget: narrowTarget}
 	return modes.AnalyzeOverSpans(engine.ToCodePoints(input), spans, plan, localeData, ctx)
 }
 
 func analyzeMarkdown(input string, opts Options) ([]Change, error) {
-	// Validation order is public, tested behaviour and is shared with runMarkdown: rules, then
-	// locale, then dialect/parsing (analyze.md section 4, A1).
+	// Validation order is public, tested behaviour and is shared with runMarkdown
+	// (ARCHITECTURE.md 7): mode, narrowNbsp, rules, locale, then dialect/parsing (analyze.md
+	// section 4, A1).
+	narrowTarget, err := engine.ResolveNarrowTarget(opts.NarrowNbsp)
+	if err != nil {
+		return nil, err
+	}
 	resolvedLocale, localeData, plan, err := engine.Prepare(opts.Locale, opts.Rules)
 	if err != nil {
 		return nil, err
@@ -252,6 +285,6 @@ func analyzeMarkdown(input string, opts Options) ([]Change, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx := engine.RuleContext{Mode: "markdown", Dialect: opts.Dialect, Locale: resolvedLocale}
+	ctx := engine.RuleContext{Mode: "markdown", Dialect: opts.Dialect, Locale: resolvedLocale, NarrowTarget: narrowTarget}
 	return modes.AnalyzeOverSpans(engine.ToCodePoints(input), spans, plan, localeData, ctx)
 }

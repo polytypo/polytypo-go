@@ -138,6 +138,9 @@ type FixtureCase struct {
 	Throws  string          `json:"throws,omitempty"`
 	Note    string          `json:"note,omitempty"`
 	Rules   map[string]bool `json:"rules,omitempty"`
+	// NarrowNbsp is spec 1.3.0's case-level option (nbsp.md 3.1a), passed through to Transform
+	// on BOTH calls — the idempotency re-run carries the case's own options, not the defaults.
+	NarrowNbsp string `json:"narrowNbsp,omitempty"`
 }
 
 // Fixtures is a spec/fixtures/<locale>.json file.
