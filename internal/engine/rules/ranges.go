@@ -41,21 +41,22 @@ func rngIsNonDecreasing(cp []rune, leftStart, rightStart, length int) bool {
 	return true
 }
 
-// rngGuardsPass is ranges.md 3.3, G1-G5. left/right are the token's post-joiner-walk flank
-// indices (both already known to be DIGIT by the caller).
-func rngGuardsPass(cp []rune, left, right int) bool {
-	n := len(cp)
-	a := left
-	for a > 0 && dshIsDigit(cp[a-1]) {
-		a--
-	}
-	b := right
-	for b+1 < n && dshIsDigit(cp[b+1]) {
-		b++
-	}
+// rngGuardsPass is ranges.md 3.2, G1-G5, over the flanks and digit runs 3.2a's walk produced.
+// before/after read past a matched outer closed-up symbol, so G1-G3 judge the text in front of
+// the whole member rather than the symbol itself -- which is what declines `US$15-$20` on G1.
+func rngGuardsPass(cp []rune, f rangeFlanks) bool {
+	left, right, a, b := f.left, f.right, f.a, f.b
 
-	before := dshEffectiveNeighbour(cp, a-1, -1)
-	after := dshEffectiveNeighbour(cp, b+1, 1)
+	beforeFrom := a
+	if f.outerLeft >= 0 {
+		beforeFrom = f.outerLeft
+	}
+	afterFrom := b
+	if f.outerRight >= 0 {
+		afterFrom = f.outerRight
+	}
+	before := dshEffectiveNeighbour(cp, beforeFrom-1, -1)
+	after := dshEffectiveNeighbour(cp, afterFrom+1, 1)
 
 	// G1 -- no letter adjacency.
 	if engine.IsLetter(before) {
@@ -95,15 +96,17 @@ func scanRanges(cp []rune, locale spec.LocaleData, ctx engine.RuleContext) []eng
 	style := locale.Dash.Range
 
 	for _, token := range dshFindTokens(cp) {
-		// ranges.md 3.2 -- a range candidate iff both flanks are DIGIT. `ranges` never
-		// processes any other token shape; that is `dashes`' territory, and `dashes` declines
-		// a digit-flanked token unconditionally too (operator decision, spec 0.5.0) -- neither
-		// rule reinterprets the other's shape, whether or not `ranges` is enabled.
-		if !dshIsDigit(token.leftCp) || !dshIsDigit(token.rightCp) {
+		// ranges.md 3.2, 3.2a -- a candidate iff both flanks are DIGIT once a matched closed-up
+		// symbol has been walked over. `ranges` never processes any other token shape; that is
+		// `dashes`' territory, and `dashes` declines a candidate unconditionally too (operator
+		// decision, spec 0.5.0) -- neither rule reinterprets the other's shape, whether or not
+		// `ranges` is enabled.
+		flanks, isCandidate := rngFlanks(cp, token.left, token.right)
+		if !isCandidate {
 			continue
 		}
 
-		if !rngGuardsPass(cp, token.left, token.right) {
+		if !rngGuardsPass(cp, flanks) {
 			continue
 		}
 
@@ -115,14 +118,16 @@ func scanRanges(cp []rune, locale spec.LocaleData, ctx engine.RuleContext) []eng
 
 		if dshIsSpacedStyle(style) {
 			// T1: a tight token may not become spaced across a digit run that has a far dash.
-			if token.lsp == 0 && token.rsp == 0 && dshIsSpacingTransitionBlocked(cp, token.left, token.right) {
+			// T1/T2 read the walked flanks: ranges.md 3.2a makes cp[L']/cp[R'] what every
+			// shared guard sees once a closed-up symbol has been consumed.
+			if token.lsp == 0 && token.rsp == 0 && dshIsSpacingTransitionBlocked(cp, flanks.left, flanks.right) {
 				continue
 			}
 			// T2: the emitted U+0020 must not land where `spaces` (order 10) would delete it.
-			if dshIsStripBeforeOrCloseBracket(token.rightCp) {
+			if dshIsStripBeforeOrCloseBracket(cp[flanks.right]) {
 				continue
 			}
-			if dshIsOpenBracket(token.leftCp) {
+			if dshIsOpenBracket(cp[flanks.left]) {
 				continue
 			}
 		}
