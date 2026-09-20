@@ -57,7 +57,7 @@ type Options struct {
 	// Locale is required. An unknown locale returns CodeUnknownLocale; there is never a
 	// fallback to English (section 4.7).
 	Locale string
-	// Mode is "text" (the default, if empty), "html", or "markdown".
+	// Mode is "text" (the default, if empty), "html", "markdown", or "yaml".
 	Mode string
 	// Dialect is required iff Mode == "markdown" ("commonmark"; "mdx" is not implemented by
 	// this runtime and returns CodeInvalidDialect). Rejected — must be empty — in the other two
@@ -67,6 +67,13 @@ type Options struct {
 	// default-off rule in (only "ranges" defaults off). Absence of a key always means "use that
 	// rule's own default," never "off."
 	Rules map[string]bool
+	// Keys is required iff Mode == "yaml": the mapping keys whose scalar values are
+	// processable (modes.md 3.8.2). It has no default, because YAML is a data format with
+	// islands of prose in it and nothing in its syntax separates "description:" from "run:" —
+	// the caller knows which keys hold prose and the library never can. A nil slice returns
+	// CodeInvalidOption; an empty, non-nil slice is legal and processes nothing. Ignored in the
+	// other three modes.
+	Keys []string
 	// NarrowNbsp is "narrow" (the default, also the zero value) or "nbsp". "nbsp" makes the
 	// engine emit U+00A0 everywhere it would emit U+202F — the narrow no-break space many common
 	// faces do not carry (nbsp.md 3.1a). It moves the rule's target rather than post-processing
@@ -78,11 +85,11 @@ func resolveMode(mode string) (string, error) {
 	switch mode {
 	case "", "text":
 		return "text", nil
-	case "html", "markdown":
+	case "html", "markdown", "yaml":
 		return mode, nil
 	default:
 		return "", engine.NewError(engine.CodeInvalidMode,
-			fmt.Sprintf(`unknown mode %q. Expected "text", "html" or "markdown"`, mode))
+			fmt.Sprintf(`unknown mode %q. Expected "text", "html", "markdown" or "yaml"`, mode))
 	}
 }
 
@@ -123,9 +130,37 @@ func Transform(input string, opts Options) (out string, err error) {
 			return "", engine.NewError(engine.CodeInvalidDialect, `"dialect" is only valid when mode is "markdown"`)
 		}
 		return runHTML(input, opts)
+	case "yaml":
+		if opts.Dialect != "" {
+			return "", engine.NewError(engine.CodeInvalidDialect, `"dialect" is only valid when mode is "markdown"`)
+		}
+		return runYAML(input, opts)
 	default: // "markdown"
 		return runMarkdown(input, opts)
 	}
+}
+
+// runYAML is the only pipeline here with no parser dependency at all — span selection is the
+// specified scan of modes.md 3.8, not a library. There is likewise no CodeMalformedInput
+// counterpart: with no declared grammar to violate, a file that is not YAML yields few spans or
+// none and comes back byte for byte (modes.md 3.8.3). The only error this mode adds is Keys,
+// which is about the call and not the input.
+func runYAML(input string, opts Options) (string, error) {
+	narrowTarget, err := engine.ResolveNarrowTarget(opts.NarrowNbsp)
+	if err != nil {
+		return "", err
+	}
+	resolvedLocale, localeData, plan, err := engine.Prepare(opts.Locale, opts.Rules)
+	if err != nil {
+		return "", err
+	}
+	keys, err := engine.ResolveYAMLKeys(opts.Keys)
+	if err != nil {
+		return "", err
+	}
+	cp := engine.ToCodePoints(input)
+	ctx := engine.RuleContext{Mode: "yaml", Locale: resolvedLocale, NarrowTarget: narrowTarget}
+	return modes.RunOverSpans(cp, modes.YAMLSpans(cp, keys), plan, localeData, ctx)
 }
 
 func runText(input string, opts Options) (string, error) {
@@ -226,6 +261,11 @@ func Analyze(input string, opts Options) (changes []Change, err error) {
 			return nil, engine.NewError(engine.CodeInvalidDialect, `"dialect" is only valid when mode is "markdown"`)
 		}
 		return analyzeHTML(input, opts)
+	case "yaml":
+		if opts.Dialect != "" {
+			return nil, engine.NewError(engine.CodeInvalidDialect, `"dialect" is only valid when mode is "markdown"`)
+		}
+		return analyzeYAML(input, opts)
 	default: // "markdown"
 		return analyzeMarkdown(input, opts)
 	}
@@ -264,6 +304,26 @@ func analyzeHTML(input string, opts Options) ([]Change, error) {
 	}
 	ctx := engine.RuleContext{Mode: "html", Locale: resolvedLocale, NarrowTarget: narrowTarget}
 	return modes.AnalyzeOverSpans(engine.ToCodePoints(input), spans, plan, localeData, ctx)
+}
+
+// analyzeYAML is analyze.md section 1, "yaml" mode: offsets are into the document, not into a
+// span (analyze.md section 6).
+func analyzeYAML(input string, opts Options) ([]Change, error) {
+	narrowTarget, err := engine.ResolveNarrowTarget(opts.NarrowNbsp)
+	if err != nil {
+		return nil, err
+	}
+	resolvedLocale, localeData, plan, err := engine.Prepare(opts.Locale, opts.Rules)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := engine.ResolveYAMLKeys(opts.Keys)
+	if err != nil {
+		return nil, err
+	}
+	cp := engine.ToCodePoints(input)
+	ctx := engine.RuleContext{Mode: "yaml", Locale: resolvedLocale, NarrowTarget: narrowTarget}
+	return modes.AnalyzeOverSpans(cp, modes.YAMLSpans(cp, keys), plan, localeData, ctx)
 }
 
 func analyzeMarkdown(input string, opts Options) ([]Change, error) {

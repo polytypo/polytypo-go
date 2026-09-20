@@ -122,13 +122,21 @@ func spanContaining(ranges []SpanRange, p int) (SpanRange, bool) {
 	return SpanRange{}, false
 }
 
+// space is U+0020, the one emitted code point whose meaning is positional (modes.md 3.4,
+// 5 item 2).
+const space = ' '
+
 // FilterBoundaryEdits is modes.md 3.4, two safety nets, both pure functions of (p, q, r, s0, s1):
 //
 //  1. No edit may contain a marker — one that does is a bug, discarded rather than
 //     redistributed.
 //  2. The edge-growth rule: an edit is discarded if it would place code points at an extremity of
-//     its span that were not there before (p == s0 and r > d, or q == s1 and r > d, with
-//     d = q - p + 1 the replaced length and r the replacement length).
+//     its span that were not there before. That sentence is the rule; "r > d" alone is an
+//     incorrect formalisation of it and misses r == d. dashes P3 admits a run of THREE dashes, so
+//     "---" -> U+0020 en-dash U+0020 is 3 -> 3: the length test sees nothing while U+0020 lands
+//     on both extremities anyway. The second clause tests the CHARACTER, and only U+0020 needs
+//     testing — it is the one code point any rule emits whose meaning comes from its position
+//     rather than from itself (modes.md 5 item 2).
 //
 // Deletion at an edge is NOT restricted here — r > d is always false for a deletion, so this
 // filter never sees one; that case is spaces.md 3.2 step 4's own edge-as-NONE clause instead.
@@ -150,8 +158,16 @@ func FilterBoundaryEdits(cp []rune, edits []engine.Edit, ranges []SpanRange) []e
 		q := edit.End - 1
 		d := edit.End - edit.Start
 		r := len(edit.Replacement)
-		if span, ok := spanContaining(ranges, p); ok && r > d && (p == span.First || q == span.Last) {
-			continue
+		if span, ok := spanContaining(ranges, p); ok && (p == span.First || q == span.Last) {
+			if r > d {
+				continue
+			}
+			if r > 0 && p == span.First && edit.Replacement[0] == space && cp[p] != space {
+				continue
+			}
+			if r > 0 && q == span.Last && edit.Replacement[r-1] == space && cp[q] != space {
+				continue
+			}
 		}
 
 		out = append(out, edit)

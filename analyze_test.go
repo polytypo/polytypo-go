@@ -55,7 +55,7 @@ func TestAnalyzeRejectsWhatTransformRejects(t *testing.T) {
 		{"unknown rule wins over unknown locale",
 			polytypo.Options{Locale: "xx", Rules: map[string]bool{"nope": true}},
 			polytypo.CodeUnknownRule},
-		{"unknown mode", polytypo.Options{Locale: "en-US", Mode: "yaml"}, polytypo.CodeInvalidMode},
+		{"unknown mode", polytypo.Options{Locale: "en-US", Mode: "asciidoc"}, polytypo.CodeInvalidMode},
 		{"markdown requires a dialect",
 			polytypo.Options{Locale: "en-US", Mode: "markdown"}, polytypo.CodeInvalidDialect},
 		{"dialect outside markdown",
@@ -131,7 +131,7 @@ func TestAnalyzeAgreesWithTransformOnEveryFixture(t *testing.T) {
 			if c.Throws != "" || c.Dialect == "mdx" {
 				continue
 			}
-			opts := polytypo.Options{Locale: fx.Locale, Mode: c.Mode, Dialect: c.Dialect, Rules: c.Rules}
+			opts := polytypo.Options{Locale: fx.Locale, Mode: c.Mode, Dialect: c.Dialect, Rules: c.Rules, Keys: c.Keys}
 			out, err := polytypo.Transform(c.In, opts)
 			if err != nil {
 				t.Fatalf("%s/%s: Transform failed: %v", fx.Locale, c.ID, err)
