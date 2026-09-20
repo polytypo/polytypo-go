@@ -141,6 +141,10 @@ type FixtureCase struct {
 	// NarrowNbsp is spec 1.3.0's case-level option (nbsp.md 3.1a), passed through to Transform
 	// on BOTH calls — the idempotency re-run carries the case's own options, not the defaults.
 	NarrowNbsp string `json:"narrowNbsp,omitempty"`
+	// Keys is spec 1.3.0's yaml-mode option (modes.md 3.8.2), required exactly when Mode is
+	// "yaml" and forbidden otherwise. A nil slice is "not supplied"; an empty, non-nil slice
+	// is legal and processes nothing, so the JSON null/[] distinction is load-bearing here.
+	Keys []string `json:"keys,omitempty"`
 }
 
 // Fixtures is a spec/fixtures/<locale>.json file.

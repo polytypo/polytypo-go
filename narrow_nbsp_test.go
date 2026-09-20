@@ -105,7 +105,7 @@ func TestNarrowNbspValidation(t *testing.T) {
 		want polytypo.ErrorCode
 	}{
 		{"unknown value", polytypo.Options{Locale: "fr", NarrowNbsp: "wide"}, polytypo.CodeInvalidOption},
-		{"mode wins", polytypo.Options{Locale: "fr", Mode: "yaml", NarrowNbsp: "wide"}, polytypo.CodeInvalidMode},
+		{"mode wins", polytypo.Options{Locale: "fr", Mode: "asciidoc", NarrowNbsp: "wide"}, polytypo.CodeInvalidMode},
 		{"beats an unknown rule", polytypo.Options{Locale: "fr", NarrowNbsp: "wide", Rules: map[string]bool{"nope": true}}, polytypo.CodeInvalidOption},
 		{"beats an unknown locale", polytypo.Options{Locale: "xx", NarrowNbsp: "wide"}, polytypo.CodeInvalidOption},
 		// The check belongs to the call, not to the rule.

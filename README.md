@@ -21,7 +21,7 @@
 
 This is the Go implementation. The full spec — all locales, all rules, worked examples in each —
 lives in [polytypo/polytypo](https://github.com/polytypo/polytypo). This runtime supports the
-`text` and `html` modes fully, and `markdown` for the `commonmark` dialect only — `mdx` returns
+`text`, `html` and `yaml` modes fully, and `markdown` for the `commonmark` dialect only — `mdx` returns
 `CodeInvalidDialect` (no MDX/JSX parser is available for Go; see
 [Supported dialects](#supported-dialects)).
 
@@ -75,6 +75,26 @@ out, err := polytypo.Transform(input, polytypo.Options{
 })
 ```
 
+`yaml` mode is the one that asks something of you, and it asks for a reason. YAML is a data
+format with prose in some of it, so you name the keys whose values are prose; there is no default
+and no guess:
+
+```go
+out, err := polytypo.Transform("summary: Rates -- all of them...\nrun: git diff -- a--b\n",
+    polytypo.Options{Locale: "en-US", Mode: "yaml", Keys: []string{"summary"}})
+// summary: Rates—all of them…
+// run: git diff -- a--b
+```
+
+Nothing in YAML's syntax separates a sentence from a shell script: `description` holds one and
+`run` holds the other, spelled identically. Quoting, indentation, anchors and a block scalar's
+chomping indicator are never decoded and rewritten — the file is located, not re-emitted — so the
+trailing newlines of a `|+` block come back exactly as you wrote them. A nil `Keys` is "not
+supplied" and returns `CodeInvalidOption`; an empty, non-nil slice is legal and processes nothing.
+`yaml` mode needs no parser at all, which is also why it is the one mode this runtime could
+implement without adding a dependency: `gopkg.in/yaml.v3` reports a node's start and no end, and
+the round-trip guarantee needs both.
+
 Unlike the JS and Python ports, there is no `polytypo/text`, `polytypo/html` or
 `polytypo/markdown` subpath split: Go's linker already dead-code-eliminates unreached functions
 and `go.sum` entries are cheap, so the bundle-size/import-time motivation that justifies a
@@ -85,7 +105,7 @@ uses.
 
 `Analyze` runs the same pipeline and reports what it would do instead of doing it — one record
 per edit, each with the rule that made it and code-point offsets into the input you passed (into
-the **document**, in `html` and `markdown` mode, not into a span):
+the **document**, in `html`, `markdown` and `yaml` mode, not into a span):
 
 ```go
 changes, err := polytypo.Analyze(`Wait... "really"?`, polytypo.Options{Locale: "en-US"})
