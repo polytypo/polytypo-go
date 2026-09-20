@@ -47,10 +47,10 @@ jobs:
 
       # See ci.yml for why this is split into two steps.
       - name: Test
-        run: go test ./... -race -timeout=15m
+        run: go test ./... -race -timeout=40m
 
       - name: Test (root package, higher rapid.checks)
-        run: go test . -race -timeout=15m -rapid.checks=1000
+        run: go test . -race -timeout=40m -rapid.checks=1000
 
       # A pushed tag's literal value is passed through a step-level env var and referenced as a
       # quoted shell variable, never interpolated with `${{ }}` directly into `run:` shell text.

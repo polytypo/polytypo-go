@@ -44,11 +44,17 @@ jobs:
       # defined" on every package that doesn't. -timeout is set explicitly: the idempotency
       # bounded-exhaustive sweeps and the concurrency test are slow enough under -race that the
       # unset default (10m) is not reliable headroom on every runner.
+      #
+      # Raised from 15m to 40m with spec 1.3.0. The two slowest tests are per-locale, and the
+      # registry went from ten locales to eighteen: the same suite takes 66s here without -race
+      # and overran 15m with it. The number is a margin over that overrun, not a measurement --
+      # -race needs cgo and no C toolchain was available to time it locally. Shrinking the sweep
+      # instead is not on the table; it is the thing being bought.
       - name: Test
-        run: go test ./... -race -timeout=15m
+        run: go test ./... -race -timeout=40m
 
       - name: Test (root package, higher rapid.checks)
-        run: go test . -race -timeout=15m -rapid.checks=1000
+        run: go test . -race -timeout=40m -rapid.checks=1000
 
       - name: Staticcheck
         uses: dominikh/staticcheck-action@672a31696676d1592844bf0164b3bbfd855a4d50 # v1.4.1
