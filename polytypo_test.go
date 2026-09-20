@@ -59,7 +59,16 @@ func TestFixtures(t *testing.T) {
 						`an accepted, narrower conformance claim; see spec/CONFORMANCE.md`)
 				}
 
-				opts := polytypo.Options{Locale: fx.Locale, Mode: c.Mode, Dialect: c.Dialect, Rules: c.Rules}
+				// The SAME opts value is used below for the idempotency re-run. That is contract
+				// as of spec 1.3.0 (ARCHITECTURE.md 6.1), not convenience: a case carrying
+				// NarrowNbsp is a fixed point under its own options and not under the defaults.
+				opts := polytypo.Options{
+					Locale:     fx.Locale,
+					Mode:       c.Mode,
+					Dialect:    c.Dialect,
+					Rules:      c.Rules,
+					NarrowNbsp: c.NarrowNbsp,
+				}
 
 				if c.Throws != "" {
 					out, err := polytypo.Transform(c.In, opts)

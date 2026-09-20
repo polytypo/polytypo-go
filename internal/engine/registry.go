@@ -14,6 +14,10 @@ type RuleContext struct {
 	Mode    string
 	Dialect string // "" when not markdown
 	Locale  string // resolved locale id
+	// NarrowTarget is nbsp.md 3.1a's NARROW-TARGET, already resolved to a code point: U+202F by
+	// default, U+00A0 when the caller passed NarrowNbsp "nbsp". A rule reads a code point and
+	// never the option, so the string never reaches the pipeline.
+	NarrowTarget rune
 }
 
 // RuleFunc is one rule's scan function: given the current code-point array, the resolved locale's

@@ -130,6 +130,8 @@ type nbPrepared struct {
 	opens                   []rune
 	closes                  []rune
 	quotePairs              []nbQuoteTarget
+	// nbsp.md 3.1a NARROW-TARGET: what N2 writes, and what N8 writes for a narrow-nbsp pair.
+	narrowTarget rune
 }
 
 // nbSingleCodePoint validates that a locale-data string entry is exactly one code point, as
@@ -174,7 +176,7 @@ func nbPrepareList(entries []string) [][]rune {
 // prepareNbsp resolves the locale's nbsp and quotes fields to code points once. See nbsp.md 2 for
 // the field list and 2.1 for why the mechanism (U+00A0 vs U+202F, convert-only vs insert) lives
 // here and not in the locale file.
-func prepareNbsp(locale spec.LocaleData) nbPrepared {
+func prepareNbsp(locale spec.LocaleData, narrowTarget rune) nbPrepared {
 	data := locale.NBSP
 
 	beforePunctuation := make([]rune, len(data.BeforePunctuation))
@@ -221,7 +223,7 @@ func prepareNbsp(locale spec.LocaleData) nbPrepared {
 		if open == close {
 			continue
 		}
-		target := nbNNBSP
+		target := narrowTarget
 		if pair.InnerSpace == "nbsp" {
 			target = nbNBSP
 		}
@@ -241,6 +243,7 @@ func prepareNbsp(locale spec.LocaleData) nbPrepared {
 		opens:                   opens,
 		closes:                  closes,
 		quotePairs:              quotePairs,
+		narrowTarget:            narrowTarget,
 	}
 }
 
@@ -741,19 +744,26 @@ func nbForwardBindingSubRule(cp []rune, prep nbPrepared, claims []*engine.Edit, 
 // are therefore made disjoint by construction elsewhere (N1/N2's quote-glyph guard, nbsp.md
 // 3.10.1) rather than relying on ordering alone.
 func scanNbsp(cp []rune, locale spec.LocaleData, ctx engine.RuleContext) []engine.Edit {
-	prep := prepareNbsp(locale)
+	prep := prepareNbsp(locale, ctx.NarrowTarget)
 	claims := make([]*engine.Edit, len(cp)+1)
 
-	nbPunctuationSubRule(cp, prep, claims, prep.beforePunctuation, nbNBSP, nbNNBSP)       // N1
-	nbPunctuationSubRule(cp, prep, claims, prep.narrowBeforePunctuation, nbNNBSP, nbNBSP) // N2
-	nbShortWordsSubRule(cp, prep, claims)                                                 // N3
-	nbAbbreviationsSubRule(cp, prep, claims)                                              // N4
-	nbUnitsSubRule(cp, prep, claims)                                                      // N5
-	nbSymbolsSubRule(cp, prep, claims)                                                    // N6
-	nbInitialsSubRule(cp, prep, claims)                                                   // N7
-	nbQuotesSubRule(cp, prep, claims)                                                     // N8
-	nbForwardBindingSubRule(cp, prep, claims, prep.beforeNumber, true)                    // N9
-	nbForwardBindingSubRule(cp, prep, claims, prep.beforeWord, false)                     // N10
+	nbPunctuationSubRule(cp, prep, claims, prep.beforePunctuation, nbNBSP, nbNNBSP) // N1
+	// N2's target is NARROW-TARGET (nbsp.md 3.1a); `other` is the NOBREAK member that is not the
+	// target, which is what the sub-rule converts. With the substitution on, N2 and N1 want the
+	// same character — never different ones.
+	nbOther := nbNBSP
+	if prep.narrowTarget == nbNBSP {
+		nbOther = nbNNBSP
+	}
+	nbPunctuationSubRule(cp, prep, claims, prep.narrowBeforePunctuation, prep.narrowTarget, nbOther) // N2
+	nbShortWordsSubRule(cp, prep, claims)                                                            // N3
+	nbAbbreviationsSubRule(cp, prep, claims)                                                         // N4
+	nbUnitsSubRule(cp, prep, claims)                                                                 // N5
+	nbSymbolsSubRule(cp, prep, claims)                                                               // N6
+	nbInitialsSubRule(cp, prep, claims)                                                              // N7
+	nbQuotesSubRule(cp, prep, claims)                                                                // N8
+	nbForwardBindingSubRule(cp, prep, claims, prep.beforeNumber, true)                               // N9
+	nbForwardBindingSubRule(cp, prep, claims, prep.beforeWord, false)                                // N10
 
 	var edits []engine.Edit
 	for i := 0; i <= len(cp); i++ {
