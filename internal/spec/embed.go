@@ -48,9 +48,19 @@ type ElisionIdiom struct {
 
 // Quotes is a locale's quotes field.
 type Quotes struct {
-	Primary       QuotePair      `json:"primary"`
-	Secondary     QuotePair      `json:"secondary"`
-	ElisionIdioms []ElisionIdiom `json:"elisionIdioms"`
+	Primary        QuotePair      `json:"primary"`
+	Secondary      QuotePair      `json:"secondary"`
+	ElisionIdioms  []ElisionIdiom `json:"elisionIdioms"`
+	ElisionClitics ElisionClitics `json:"elisionClitics"`
+}
+
+// ElisionClitics is a locale's quotes.elisionClitics field (quotes.md 3.2's span-boundary elision
+// veto, spec 1.4.0). Both lists are POSITIONAL: Before is matched against the maximal LETTER run
+// ending before the mark, After against the run beginning after it. Both may be empty, and empty
+// is a total no-op.
+type ElisionClitics struct {
+	Before []string `json:"before"`
+	After  []string `json:"after"`
 }
 
 // Dash is a locale's dash field. Parenthetical/Range are one of "em-tight", "em-spaced",

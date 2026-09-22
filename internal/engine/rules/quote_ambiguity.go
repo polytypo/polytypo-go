@@ -265,3 +265,86 @@ func qaComputeAmbiguousShapeIndices(cp []rune) map[int]struct{} {
 
 	return ambiguous
 }
+
+// qaComputeSpanBoundaryVetoIndices is quotes.md 3.2's span-boundary elision veto (spec 1.4.0).
+//
+// It fires only where one literal neighbour of a NARROW mark IS modes.md 3.2's inline Marker --
+// the marker stands exactly where the attaching word would be, which is why the medial-elision
+// veto cannot see the shape and why a possessive or elision written flush against a span was
+// classified as a quotation candidate and inverted the enclosing pair (canonical issue #53 1).
+//
+// The attaching side is read as a MAXIMAL LETTER run bounded by a non-ALNUM code point and
+// compared whole: a prefix test would match the entry "s" inside "sure" and eat <em>'sure'</em>,
+// a genuine quotation. The comparison folds the RUN's first code point, ASCII A-Z only, and is
+// exact thereafter -- never a locale-dependent case mapping (ARCHITECTURE.md 4.4).
+//
+// Keyed off the marker and never off the mode: a mode conditional here is forbidden (modes.md
+// 7.4), which is also why text mode needs no separate code path -- it produces no marker.
+func qaComputeSpanBoundaryVetoIndices(cp []rune, clitics spec.ElisionClitics) map[int]struct{} {
+	vetoed := make(map[int]struct{})
+	if len(clitics.Before) == 0 && len(clitics.After) == 0 {
+		return vetoed
+	}
+	before := qaCompileClitics(clitics.Before)
+	after := qaCompileClitics(clitics.After)
+
+	for i := range cp {
+		if !qaNarrow[cp[i]] {
+			continue
+		}
+		if len(after) > 0 && qaAt(cp, i-1) == engine.Marker && qaRunMatches(cp, i, 1, after) {
+			vetoed[i] = struct{}{}
+			continue
+		}
+		if len(before) > 0 && qaAt(cp, i+1) == engine.Marker && qaRunMatches(cp, i, -1, before) {
+			vetoed[i] = struct{}{}
+		}
+	}
+	return vetoed
+}
+
+func qaCompileClitics(entries []string) [][]rune {
+	compiled := make([][]rune, 0, len(entries))
+	for _, entry := range entries {
+		compiled = append(compiled, []rune(entry))
+	}
+	return compiled
+}
+
+// qaRunMatches compares the maximal LETTER run adjacent to the mark at i, growing in dir, against
+// entries. It declines an empty run, and a run an ALNUM code point continues past -- that bound is
+// what makes the run the WHOLE fragment rather than a prefix of one.
+func qaRunMatches(cp []rune, i int, dir int, entries [][]rune) bool {
+	j := i + dir
+	for j >= 0 && j < len(cp) && engine.IsLetter(cp[j]) {
+		j += dir
+	}
+	if j == i+dir {
+		return false
+	}
+	if outer := qaAt(cp, j); outer != engine.None && qaIsAlnum(outer) {
+		return false
+	}
+
+	var start, end int
+	if dir == -1 {
+		start, end = j+1, i-1
+	} else {
+		start, end = i+1, j-1
+	}
+	length := end - start + 1
+
+	for _, entry := range entries {
+		if len(entry) != length {
+			continue
+		}
+		same := qaAsciiLower(cp[start]) == entry[0]
+		for k := 1; same && k < len(entry); k++ {
+			same = cp[start+k] == entry[k]
+		}
+		if same {
+			return true
+		}
+	}
+	return false
+}

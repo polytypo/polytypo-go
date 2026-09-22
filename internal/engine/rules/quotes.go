@@ -188,7 +188,7 @@ func qtSkipRight(cp []rune, i int) rune {
 // always skips right and canClose always skips left (mandate 2's inner-side skip); the outer
 // side skips only when nbsp can reach it (the locale-derived spaceRight/spaceLeft sets), which
 // is what keeps every verdict inert to nbsp (Lemma B).
-func qtCollectCandidates(cp []rune, skip qtSkipSets, idioms []spec.ElisionIdiom) []qtCandidate {
+func qtCollectCandidates(cp []rune, skip qtSkipSets, idioms []spec.ElisionIdiom, clitics spec.ElisionClitics) []qtCandidate {
 	n := len(cp)
 	var candidates []qtCandidate
 
@@ -196,14 +196,16 @@ func qtCollectCandidates(cp []rune, skip qtSkipSets, idioms []spec.ElisionIdiom)
 	// the general ambiguous-medial-span shape (quotes.md 3.2a) — quotes must decline pairing for
 	// both, so apostrophe's own case ladder never independently "fixes" a shape quotes left
 	// alone.
+	// spec 1.4.0 adds a third member to the same union: the span-boundary elision veto, which
+	// fires only where one literal neighbour is the inline Marker (quotes.md 3.2).
 	idiomMatched := qaComputeIdiomMatchedIndices(cp, idioms)
 	ambiguousShape := qaComputeAmbiguousShapeIndices(cp)
-	elisionVetoed := make(map[int]struct{}, len(idiomMatched)+len(ambiguousShape))
-	for idx := range idiomMatched {
-		elisionVetoed[idx] = struct{}{}
-	}
-	for idx := range ambiguousShape {
-		elisionVetoed[idx] = struct{}{}
+	spanBoundary := qaComputeSpanBoundaryVetoIndices(cp, clitics)
+	elisionVetoed := make(map[int]struct{}, len(idiomMatched)+len(ambiguousShape)+len(spanBoundary))
+	for _, set := range []map[int]struct{}{idiomMatched, ambiguousShape, spanBoundary} {
+		for idx := range set {
+			elisionVetoed[idx] = struct{}{}
+		}
 	}
 
 	for i := 0; i < n; i++ {
@@ -451,7 +453,7 @@ func qtCertify(cp []rune, initial []qtPair, locale spec.LocaleData, skip qtSkipS
 
 		plan := qtComputeRenderPlan(cp, accepted, locale)
 		y, m := qtApplyRenderPlan(cp, plan)
-		rederived := qtPairCandidates(y, qtCollectCandidates(y, skip, locale.Quotes.ElisionIdioms))
+		rederived := qtPairCandidates(y, qtCollectCandidates(y, skip, locale.Quotes.ElisionIdioms, locale.Quotes.ElisionClitics))
 
 		bSet := make(map[qtPair]bool, len(rederived))
 		for _, p := range rederived {
@@ -541,7 +543,7 @@ func init() {
 func scanQuotes(cp []rune, locale spec.LocaleData, ctx engine.RuleContext) []engine.Edit {
 	skip := qtComputeSkipSets(locale)
 
-	candidates := qtCollectCandidates(cp, skip, locale.Quotes.ElisionIdioms)
+	candidates := qtCollectCandidates(cp, skip, locale.Quotes.ElisionIdioms, locale.Quotes.ElisionClitics)
 	if len(candidates) == 0 {
 		return nil
 	}
