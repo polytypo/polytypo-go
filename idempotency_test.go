@@ -129,9 +129,13 @@ func bestBoundedStrings(alphabet []rune, maxLength int, yield func(string)) {
 	}
 }
 
+// `)` is in this alphabet for apostrophe.md 3.3's case 2a (spec 1.5.0), under
+// pipeline-idempotency.md 6's standing obligation to widen the alphabet in the same change that
+// fixes a defect its bound cannot reach. It is the one CLOSEDELIM member the alphabet did not
+// already hold: `”` was in it as an emitted quote glyph and covers the quotation half.
 func TestBoundedExhaustiveSweepEveryLocale(t *testing.T) {
 	locales := allLocales(t)
-	alphabet := []rune{'"', '\'', '-', ' ', '.', '1', 'a', '«', '–', '”'}
+	alphabet := []rune{'"', '\'', '-', ' ', '.', '1', 'a', '«', '–', '”', ')'}
 	var broken []string
 	for _, locale := range locales {
 		bestBoundedStrings(alphabet, 4, func(text string) {

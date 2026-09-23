@@ -16,7 +16,7 @@ import (
 // Spec 0.5.0's preserve set existed to stop the case ladder from converting the marks quotes had
 // vetoed; conversion is now the specified outcome for exactly those marks — cases 4 and 3 are
 // what turn `rock 'n' roll` into `rock ’n’ roll`, in every locale. Case 3a (spec 1.2.0) reads
-// no locale data either: OPENQUOTE is a fixed set.
+// no locale data either: OPENQUOTE and CLOSEDELIM are fixed sets.
 
 const apoSQ = rune(0x27)
 const apoRightSingle = rune(0x2019)
@@ -93,6 +93,21 @@ func apoIsOpenquote(cp rune) bool {
 	}
 }
 
+// apoIsClosedelim is apostrophe.md 3.1 CLOSEDELIM (spec 1.5.0, case 2a): the bracket and
+// quotation members of apoCloseish, without its sentence punctuation and without the dashes
+// apoOpenish already carries. These are exactly the closing delimiters case 3 has always
+// accepted on the mark's RIGHT; before 1.5.0 no left-hand test accepted any of them.
+// engine.Marker is not a member (modes.md 3.3): it is in apoOpenish, so a mark against a span
+// boundary already reaches case 4 and emits the same U+2019.
+func apoIsClosedelim(cp rune) bool {
+	switch cp {
+	case 0x29, 0x5D, 0x7D, 0xBB, 0x2019, 0x201D, 0x203A:
+		return true
+	default:
+		return false
+	}
+}
+
 func apoIsDigit(cp rune) bool {
 	return cp >= 0x30 && cp <= 0x39
 }
@@ -112,6 +127,12 @@ func apoIsApostrophe(left, right rune) bool {
 	}
 	// Case 2 — medial apostrophe: `don't`, `l'été`, `O'Brien`, `1990's`.
 	if apoIsAlnum(left) && apoIsAlnum(right) {
+		return true
+	}
+	// Case 2a — suffix or possessive after a closing delimiter (spec 1.5.0): `(order 90)'s`,
+	// `“Hamlet”'s`, `{user}'s`. Disjoint from every other case, so its position in the ladder
+	// carries no behaviour.
+	if apoIsClosedelim(left) && apoIsAlnum(right) {
 		return true
 	}
 	// Case 3 — trailing elision or possessive: `the dogs' bowls`, `Jesus'`, `rock 'n'` (the
