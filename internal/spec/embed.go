@@ -95,14 +95,6 @@ type NBSP struct {
 	InitialBinding          string   `json:"initialBinding"` // "none" | "chain" | "single"
 }
 
-// Source is one normative citation (locale.schema.json "sources").
-type Source struct {
-	Rule string `json:"rule"`
-	Cite string `json:"cite"`
-	URL  string `json:"url,omitempty"`
-	Note string `json:"note,omitempty"`
-}
-
 // LocaleData is the full declarative shape of one spec/locales/<code>.json file.
 type LocaleData struct {
 	Locale   string   `json:"locale"`
@@ -112,7 +104,6 @@ type LocaleData struct {
 	Ellipsis Ellipsis `json:"ellipsis"`
 	Hyphen   Hyphen   `json:"hyphen"`
 	NBSP     NBSP     `json:"nbsp"`
-	Sources  []Source `json:"sources"`
 }
 
 // Registry is spec/locales/registry.json: the set of known locales and their aliases.
