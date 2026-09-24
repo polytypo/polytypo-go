@@ -1,10 +1,12 @@
 # Vendored spec subset
 
-This directory is a manually-synced copy of the subset of `polytypo/polytypo`'s canonical `spec/`
-that this repository's build and test suite read: `locales/`, `fixtures/`, `rules/order.json`,
-`rules/dashes.md`, `schema/`, `VERSION`, `UNICODE`. It is **not** the canonical spec — the rest of
-the normative prose (`spec/rules/*.md` beyond `dashes.md`) and `validate-spec.mjs` live only in
-`polytypo/polytypo`.
+This directory is a manually-synced copy of a subset of `polytypo/polytypo`'s canonical `spec/`:
+`locales/`, `fixtures/`, the whole of `rules/`, `schema/`, `VERSION` and `UNICODE`. Code and tests
+here read only part of that — the locale and fixture data, `rules/order.json` and
+`rules/dashes.md`; the other twelve rule documents are carried as the normative prose for the
+behaviour the data drives, next to the data. It is **not** the canonical spec: `validate-spec.mjs`
+lives only in `polytypo/polytypo`, and so does the authority — a change starts there and arrives
+here by re-copying, never the other way round.
 
 Named `internal/spec`, not `vendor/polytypo-spec` like the JS and Python ports: a top-level
 directory literally named `vendor` has reserved meaning to the Go toolchain (`go mod vendor`
