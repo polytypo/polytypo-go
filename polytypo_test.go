@@ -71,6 +71,10 @@ func TestFixtures(t *testing.T) {
 					Rules:      c.Rules,
 					NarrowNbsp: c.NarrowNbsp,
 					Keys:       c.Keys,
+					// Same reasoning for FrontmatterKeys (spec 1.7.0, modes.md 3.7.4): a case
+					// carrying it is a fixed point under it, and re-running without it would
+					// compare the block against a run that never saw the option.
+					FrontmatterKeys: c.FrontmatterKeys,
 				}
 
 				if c.Throws != "" {

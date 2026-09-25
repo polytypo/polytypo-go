@@ -95,6 +95,34 @@ supplied" and returns `CodeInvalidOption`; an empty, non-nil slice is legal and 
 implement without adding a dependency: `gopkg.in/yaml.v3` reports a node's start and no end, and
 the round-trip guarantee needs both.
 
+In `markdown` mode frontmatter is skipped whole by default, delimiters included — it is a
+machine-read block, and `fr` would put a narrow no-break space in front of the colon of every
+field in it. On a site whose frontmatter carries the headline that leaves the most visible string
+on the page untouched, so name the keys you want processed:
+
+```go
+out, err := polytypo.Transform(
+    "---\ntitle: He said \"hello\" once\nslug: \"he-said-hello\"\n---\n\nThe body was typeset all along.\n",
+    polytypo.Options{
+        Locale: "en-US", Mode: "markdown", Dialect: "commonmark",
+        FrontmatterKeys: []string{"title"},
+    })
+// ---
+// title: He said “hello” once
+// slug: "he-said-hello"
+// ---
+//
+// The body was typeset all along.
+```
+
+A nil `FrontmatterKeys` means the block is skipped whole, as before spec 1.7.0; an empty, non-nil
+slice is legal and processes nothing. A key you do not name never changes. The block is read with
+the same scan `yaml` mode uses, so it refuses the same constructs — a single-quoted scalar
+containing `''` among them, which is how an apostrophe is written inside single quotes, so
+`title: 'It''s a test'` comes back untouched. The block is also processed separately from the body,
+which shows up in exactly one place: an unbalanced quotation mark in `title` cannot pair with a
+mark in your first paragraph.
+
 Unlike the JS and Python ports, there is no `polytypo/text`, `polytypo/html` or
 `polytypo/markdown` subpath split: Go's linker already dead-code-eliminates unreached functions
 and `go.sum` entries are cheap, so the bundle-size/import-time motivation that justifies a

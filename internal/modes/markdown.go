@@ -44,6 +44,26 @@ func ResolveMarkdownDialect(dialect string) error {
 // frontmatter) if the document does not open with a bare delimiter line immediately closed by a
 // matching one.
 func detectFrontmatterEnd(source string) int {
+	block, _ := detectFrontmatter(source)
+	return block.end
+}
+
+// frontmatterBlock is what detectFrontmatter found: the block's end byte, the delimiter it used,
+// and the byte range of its content — from after the opening delimiter line's terminator to the
+// byte that begins the closing delimiter line (modes.md 3.7.4). Both delimiter lines and every
+// line terminator lie outside that range.
+type frontmatterBlock struct {
+	end          int
+	delim        string
+	contentStart int
+	contentEnd   int
+}
+
+// detectFrontmatter is detectFrontmatterEnd's scan, reporting the content range as well, so that
+// spec 1.7.0's FrontmatterKeys (modes.md 3.7.4) locates exactly what 3.7.3 skips. One scan, one
+// answer: a second implementation of "where does the block start and end" is how the skip and the
+// option would come to disagree.
+func detectFrontmatter(source string) (frontmatterBlock, bool) {
 	for _, delim := range [2]string{"---", "+++"} {
 		if !strings.HasPrefix(source, delim) {
 			continue
@@ -56,7 +76,8 @@ func detectFrontmatterEnd(source string) int {
 		if strings.TrimRight(source[afterDelim:afterDelim+firstLineEnd], "\r") != "" {
 			continue // not a bare delimiter line, e.g. "---" thematic break followed by text
 		}
-		cursor := afterDelim + firstLineEnd + 1
+		contentStart := afterDelim + firstLineEnd + 1
+		cursor := contentStart
 		rest := source[cursor:]
 		for {
 			nl := strings.IndexByte(rest, '\n')
@@ -68,7 +89,12 @@ func detectFrontmatterEnd(source string) int {
 				line, consumed = rest[:nl], nl+1
 			}
 			if strings.TrimRight(line, "\r") == delim {
-				return cursor + consumed
+				return frontmatterBlock{
+					end:          cursor + consumed,
+					delim:        delim,
+					contentStart: contentStart,
+					contentEnd:   cursor,
+				}, true
 			}
 			if nl == -1 {
 				break
@@ -77,7 +103,7 @@ func detectFrontmatterEnd(source string) int {
 			cursor += consumed
 		}
 	}
-	return 0
+	return frontmatterBlock{}, false
 }
 
 func isTagNameStop(b byte) bool {
@@ -220,6 +246,40 @@ func (w *mdWalker) walk(n ast.Node) {
 
 // MarkdownSpans locates the processable spans of a Markdown document. dialect must already be
 // validated via ResolveMarkdownDialect (== "commonmark"); this function does not re-check it.
+// FrontmatterSpans is the frontmatter block's own spans, which form a SECOND TEXT UNIT
+// (modes.md 3.1, 3.7.4, spec 1.7.0): the pipeline runs over them separately from the body's, so
+// an unbalanced mark in a metadata field can never pair with one in the first paragraph, and the
+// option cannot change a byte outside the block.
+//
+// Spans come from the scan of modes.md 3.8 — frontmatter IS YAML, and implementing that grammar
+// twice is how two implementations of one spec drift — with keys as step 8's key predicate. The
+// block is the construct MarkdownSpans skips (3.7.3, the same detectFrontmatter scan), so the
+// option only ever adds spans where the skip removed them: no source position belongs to both
+// units. A TOML block yields nothing, with the option or without it — its quoting is a second
+// grammar this scan does not claim (modes.md 7.13).
+func FrontmatterSpans(source string, keys map[string]struct{}) []Span {
+	if len(keys) == 0 {
+		return nil
+	}
+	block, ok := detectFrontmatter(source)
+	if !ok || block.delim != "---" {
+		return nil
+	}
+	cp := engine.ToCodePoints(source)
+	offsets := NewByteOffsets(cp)
+	start := offsets.CodePointOf(block.contentStart)
+	end := offsets.CodePointOf(block.contentEnd)
+	if end <= start {
+		return nil
+	}
+	spans := YAMLSpans(cp[start:end], keys)
+	shifted := make([]Span, 0, len(spans))
+	for _, span := range spans {
+		shifted = append(shifted, Span{Start: span.Start + start, End: span.End + start})
+	}
+	return shifted
+}
+
 func MarkdownSpans(source string) ([]Span, error) {
 	src := []byte(source)
 	cp := engine.ToCodePoints(source)

@@ -1,6 +1,8 @@
 package modes
 
 import (
+	"sort"
+
 	"github.com/polytypo/polytypo-go/internal/engine"
 	"github.com/polytypo/polytypo-go/internal/spec"
 )
@@ -56,21 +58,84 @@ func RunOverSpans(sourceCP []rune, spans []Span, plan []string, localeData spec.
 		return "", err
 	}
 
+	replacements := make([]replacement, 0, len(normalized))
+	for i, span := range normalized {
+		replacements = append(replacements, replacement{span: span, piece: pieces[i]})
+	}
+	return emit(sourceCP, replacements), nil
+}
+
+// replacement pairs a span with what the pipeline made of it.
+type replacement struct {
+	span  Span
+	piece []rune
+}
+
+// emit is modes.md 4: the source with disjoint replacements applied at recorded offsets, and
+// nothing else changed. Shared by RunOverSpans and RunOverUnits, because step 5 of 3.5 runs once
+// per document however many units step 3 ran over.
+func emit(sourceCP []rune, replacements []replacement) string {
 	out := make([]rune, 0, len(sourceCP))
 	cursor := 0
-	for i, span := range normalized {
-		piece := pieces[i]
-		original := sourceCP[span.Start:span.End]
-		out = append(out, sourceCP[cursor:span.Start]...)
-		if string(piece) == string(original) {
+	for _, r := range replacements {
+		original := sourceCP[r.span.Start:r.span.End]
+		out = append(out, sourceCP[cursor:r.span.Start]...)
+		if string(r.piece) == string(original) {
 			out = append(out, original...)
 		} else {
-			out = append(out, piece...)
+			out = append(out, r.piece...)
 		}
-		cursor = span.End
+		cursor = r.span.End
 	}
 	out = append(out, sourceCP[cursor:]...)
-	return string(out), nil
+	return string(out)
+}
+
+// RunOverUnits is modes.md 3.1 and 3.5 step 3 (spec 1.7.0). A document has one text unit, except
+// in "markdown" with FrontmatterKeys, where the frontmatter block's spans form a unit of their
+// own. The pipeline runs once per unit and the two edit sets are disjoint, because no span of one
+// unit lies inside the other — which is what the body's walk skipping the block guarantees. Only
+// step 5 is shared: the source is emitted once, in document order.
+func RunOverUnits(sourceCP []rune, units [][]Span, plan []string, localeData spec.LocaleData, ctx engine.RuleContext) (string, error) {
+	var replacements []replacement
+	for _, spans := range units {
+		normalized, err := NormalizeSpans(spans)
+		if err != nil {
+			return "", err
+		}
+		if len(normalized) == 0 {
+			continue
+		}
+		transformed, err := runRulesOverSpans(ConcatenateSpans(sourceCP, normalized), plan, localeData, ctx)
+		if err != nil {
+			return "", err
+		}
+		pieces, err := SplitOnMarker(transformed, len(normalized))
+		if err != nil {
+			return "", err
+		}
+		for i, span := range normalized {
+			replacements = append(replacements, replacement{span: span, piece: pieces[i]})
+		}
+	}
+	sort.SliceStable(replacements, func(i, j int) bool {
+		return replacements[i].span.Start < replacements[j].span.Start
+	})
+	return emit(sourceCP, replacements), nil
+}
+
+// AnalyzeOverUnits is AnalyzeOverSpans per text unit (modes.md 3.1), reported in document order.
+func AnalyzeOverUnits(sourceCP []rune, units [][]Span, plan []string, localeData spec.LocaleData, ctx engine.RuleContext) ([]engine.Change, error) {
+	changes := []engine.Change{}
+	for _, spans := range units {
+		unitChanges, err := AnalyzeOverSpans(sourceCP, spans, plan, localeData, ctx)
+		if err != nil {
+			return nil, err
+		}
+		changes = append(changes, unitChanges...)
+	}
+	sort.SliceStable(changes, func(i, j int) bool { return changes[i].Start < changes[j].Start })
+	return changes, nil
 }
 
 // AnalyzeOverSpans is RunOverSpans, reporting instead of applying (analyze.md section 1). The

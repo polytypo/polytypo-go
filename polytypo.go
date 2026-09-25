@@ -74,6 +74,13 @@ type Options struct {
 	// CodeInvalidOption; an empty, non-nil slice is legal and processes nothing. Ignored in the
 	// other three modes.
 	Keys []string
+	// FrontmatterKeys is optional and only meaningful when Mode == "markdown" (modes.md 3.7.4,
+	// spec 1.7.0): the keys in the document's YAML frontmatter block whose scalar values are
+	// processable, located by the scan 3.8 specifies. A nil slice means the block is skipped
+	// whole, exactly as it was before 1.7.0; an empty, non-nil slice is legal and yields no
+	// spans. The block is its own text unit, so this option can never change a byte outside it.
+	// Ignored in the other three modes.
+	FrontmatterKeys []string
 	// NarrowNbsp is "narrow" (the default, also the zero value) or "nbsp". "nbsp" makes the
 	// engine emit U+00A0 everywhere it would emit U+202F — the narrow no-break space many common
 	// faces do not carry (nbsp.md 3.1a). It moves the rule's target rather than post-processing
@@ -213,12 +220,33 @@ func runMarkdown(input string, opts Options) (string, error) {
 	if err := modes.ResolveMarkdownDialect(opts.Dialect); err != nil {
 		return "", err
 	}
-	spans, err := modes.MarkdownSpans(input)
+	units, err := markdownUnits(input, opts)
 	if err != nil {
 		return "", err
 	}
 	ctx := engine.RuleContext{Mode: "markdown", Dialect: opts.Dialect, Locale: resolvedLocale, NarrowTarget: narrowTarget}
-	return modes.RunOverSpans(engine.ToCodePoints(input), spans, plan, localeData, ctx)
+	return modes.RunOverUnits(engine.ToCodePoints(input), units, plan, localeData, ctx)
+}
+
+// markdownUnits is modes.md 3.7.4: the body, and — only when the caller named frontmatter keys —
+// the frontmatter block as a second text unit. With FrontmatterKeys nil this is exactly the single
+// unit every document had before spec 1.7.0, which is why no released output can move.
+//
+// There is no validation step for the option here: Go's type system is the validation the other
+// runtimes need a check for. A nil slice is "not supplied"; anything else is already []string.
+func markdownUnits(input string, opts Options) ([][]modes.Span, error) {
+	body, err := modes.MarkdownSpans(input)
+	if err != nil {
+		return nil, err
+	}
+	if opts.FrontmatterKeys == nil {
+		return [][]modes.Span{body}, nil
+	}
+	keys := make(map[string]struct{}, len(opts.FrontmatterKeys))
+	for _, key := range opts.FrontmatterKeys {
+		keys[key] = struct{}{}
+	}
+	return [][]modes.Span{modes.FrontmatterSpans(input, keys), body}, nil
 }
 
 // Analyze runs the same pipeline as Transform and reports what it would do instead of doing it
@@ -341,10 +369,10 @@ func analyzeMarkdown(input string, opts Options) ([]Change, error) {
 	if err := modes.ResolveMarkdownDialect(opts.Dialect); err != nil {
 		return nil, err
 	}
-	spans, err := modes.MarkdownSpans(input)
+	units, err := markdownUnits(input, opts)
 	if err != nil {
 		return nil, err
 	}
 	ctx := engine.RuleContext{Mode: "markdown", Dialect: opts.Dialect, Locale: resolvedLocale, NarrowTarget: narrowTarget}
-	return modes.AnalyzeOverSpans(engine.ToCodePoints(input), spans, plan, localeData, ctx)
+	return modes.AnalyzeOverUnits(engine.ToCodePoints(input), units, plan, localeData, ctx)
 }

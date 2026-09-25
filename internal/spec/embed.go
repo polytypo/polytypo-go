@@ -146,6 +146,11 @@ type FixtureCase struct {
 	// "yaml" and forbidden otherwise. A nil slice is "not supplied"; an empty, non-nil slice
 	// is legal and processes nothing, so the JSON null/[] distinction is load-bearing here.
 	Keys []string `json:"keys,omitempty"`
+	// FrontmatterKeys is spec 1.7.0's markdown-mode option (modes.md 3.7.4): optional, and only
+	// meaningful when Mode is "markdown". A nil slice is "not supplied" and means the block is
+	// skipped whole, as before 1.7.0; an empty, non-nil slice is legal and yields no spans, so the
+	// JSON null/[] distinction is load-bearing here too.
+	FrontmatterKeys []string `json:"frontmatterKeys,omitempty"`
 }
 
 // Fixtures is a spec/fixtures/<locale>.json file.
