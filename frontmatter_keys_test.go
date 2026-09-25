@@ -255,12 +255,18 @@ func TestBoundedSweepMarkdownFrontmatterTwoUnits(t *testing.T) {
 	}
 	build("", 2)
 
+	// The swept payload is the BLOCK's content, which is what the second unit is made of; the
+	// body only has to be something the rules touch, so it takes a fixed handful rather than the
+	// same 91 strings. Under -race in CI the full cross product is 40 minutes of the same
+	// composition tested over and over.
+	bodies := []string{"", "a", "a - b", `he said "x"`, "a...b", "--- a"}
+
 	keys := []string{"k", "j"}
 	var broken []string
 	for _, locale := range locales {
 		for _, tpl := range templates {
 			for _, a := range payloads {
-				for _, b := range payloads {
+				for _, b := range bodies {
 					source := tpl.of(a, b)
 					opts := polytypo.Options{Locale: locale, Mode: "markdown", Dialect: "commonmark", FrontmatterKeys: keys}
 					once, err := polytypo.Transform(source, opts)
