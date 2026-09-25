@@ -253,13 +253,22 @@ func TestBoundedSweepMarkdownFrontmatterTwoUnits(t *testing.T) {
 			build(prefix+token, depth-1)
 		}
 	}
+	build("", 1)
+	var deepPayloads []string
+	saved := payloads
+	payloads = nil
 	build("", 2)
+	deepPayloads = payloads
+	payloads = saved
 
-	// The swept payload is the BLOCK's content, which is what the second unit is made of; the
-	// body only has to be something the rules touch, so it takes a fixed handful rather than the
-	// same 91 strings. Under -race in CI the full cross product is 40 minutes of the same
-	// composition tested over and over.
+	// The swept payload is the BLOCK's content, which is what the second unit is made of; the body
+	// only has to be something the rules touch, so it takes a fixed handful. And the two lengths
+	// are split across two runs rather than multiplied: markdown parsing under -race costs ~350x
+	// what it costs here, so the full cross product of the deeper payload was 13 minutes of CI per
+	// test step, testing the same composition over and over. Every locale gets the length-1 sweep;
+	// the length-2 payloads run in four locales, one of each dash and quote convention.
 	bodies := []string{"", "a", "a - b", `he said "x"`, "a...b", "--- a"}
+	deepLocales := []string{"en-US", "de-DE", "fr", "ru"}
 
 	keys := []string{"k", "j"}
 	var broken []string
@@ -281,6 +290,26 @@ func TestBoundedSweepMarkdownFrontmatterTwoUnits(t *testing.T) {
 					if len(broken) >= 10 {
 						break
 					}
+				}
+			}
+		}
+	}
+	for _, locale := range deepLocales {
+		for _, tpl := range templates {
+			for _, a := range deepPayloads {
+				source := tpl.of(a, `he said "x"`)
+				opts := polytypo.Options{Locale: locale, Mode: "markdown", Dialect: "commonmark", FrontmatterKeys: keys}
+				once, err := polytypo.Transform(source, opts)
+				if err != nil {
+					broken = append(broken, fmt.Sprintf("%s %s: %q errored: %v", locale, tpl.label, source, err))
+					continue
+				}
+				twice, err := polytypo.Transform(once, opts)
+				if err != nil || twice != once {
+					broken = append(broken, fmt.Sprintf("%s %s: %q -> %q -> %q (err=%v)", locale, tpl.label, source, once, twice, err))
+				}
+				if len(broken) >= 10 {
+					break
 				}
 			}
 		}
