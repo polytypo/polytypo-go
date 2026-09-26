@@ -2997,6 +2997,99 @@
       "in": "---\rtitle: a \"b\"\rslug: \"x\"\r---\r\rBody \"c\" here.\r",
       "out": "---\rtitle: a \"b\"\rslug: \"x\"\r---\r\rBody “c” here.\r",
       "note": "modes.md §3.7.3a step 5 and §7.13: the block is found by CommonMark's line model, and the content is then read by §3.8.4's LF-only one, which sees a two-line block as a single line and yields no span. So the option is inert here — nothing machine-read is typeset, the block is still skipped, and the body converts. Pinned because it is a silence, and a silence nobody pinned is a silence nobody notices."
+    },
+    {
+      "id": "en-us-markdown-commonmark-frontmatter-keys-lone-cr-one-key",
+      "rule": "quotes",
+      "mode": "markdown",
+      "dialect": "commonmark",
+      "frontmatterKeys": [
+        "title"
+      ],
+      "in": "---\rtitle: a \"b\"\r---\r\rBody \"c\" here.\r",
+      "out": "---\rtitle: a \"b\"\r---\r\rBody “c” here.\r",
+      "note": "modes.md §3.7.4: a block whose content carries a U+000D not followed by U+000A yields no spans, however few lines it has. An earlier draft let a one-line block through and declined a two-line one, which made the rule depend on a line count rather than on the character; the two-line case is en-us-markdown-commonmark-frontmatter-keys-lone-cr-is-inert and this is the other side of it."
+    },
+    {
+      "id": "en-us-markdown-commonmark-lone-cr-no-block",
+      "rule": "ellipsis",
+      "mode": "markdown",
+      "dialect": "commonmark",
+      "in": "Wait for it... he said \"hi\"\rand then \"left\".\r",
+      "out": "Wait for it… he said “hi”\rand then “left”.\r",
+      "note": "modes.md §3.7.3a step 5 makes a lone U+000D a line ending the locator understands, so a document written that way reaches the body walk like any other. Pinned because the failure mode is not an error but silent offset corruption: one runtime reported byte columns for such a document and another raised POLYTYPO_MALFORMED_INPUT, a code §3.7.2 reserves for mdx."
+    },
+    {
+      "id": "en-us-markdown-commonmark-byte-order-mark-no-block",
+      "rule": "ellipsis",
+      "mode": "markdown",
+      "dialect": "commonmark",
+      "in": "﻿Wait for it... he said \"hi\"\n",
+      "out": "﻿Wait for it… he said “hi”\n",
+      "note": "modes.md §3.7.3a step 1 steps over a leading U+FEFF, and a document carrying a mark but no block must convert exactly as the same document without one. Measured across the four runtimes that implement the mode: three convert and one returns the document unchanged, so this pins the majority and names the fourth as the defect."
+    },
+    {
+      "id": "en-us-markdown-commonmark-frontmatter-keys-astral-in-the-block",
+      "rule": "apostrophe",
+      "mode": "markdown",
+      "dialect": "commonmark",
+      "frontmatterKeys": [
+        "title"
+      ],
+      "in": "---\ntitle: café 😀 it's ok\n---\n\nBody \"q\" here...\n",
+      "out": "---\ntitle: café 😀 it’s ok\n---\n\nBody “q” here…\n",
+      "note": "modes.md §3.7.3a's mask is one U+0020 per index unit, not per code point: a runtime that indexes bytes and masks an astral character to a single space shortens its input by three and shifts every body offset after it. The trailing ellipsis is what a shift eats first, so this case fails loudly rather than subtly."
+    },
+    {
+      "id": "en-us-markdown-commonmark-frontmatter-keys-lone-cr-costs-one-line",
+      "rule": "quotes",
+      "mode": "markdown",
+      "dialect": "commonmark",
+      "frontmatterKeys": [
+        "title",
+        "slug"
+      ],
+      "in": "---\ntitle: \"a\rb\"\nslug: c \"d\"\n---\n\nBody \"q\" here.\n",
+      "out": "---\ntitle: \"a\rb\"\nslug: c “d”\n---\n\nBody “q” here.\n",
+      "note": "modes.md §3.7.4's U+000D bail is per line, not per block: `title`'s value carries a stray carriage return and is declined, `slug`'s line converts, and the body converts. The other side of the lone-U+000D document cases, which lose everything because such a document is one §3.8.4 line. Implementers: the per-line test has to run to the next line's start rather than to the line's end, or a block whose only line ends in U+000D looks clean — that is the one reading under which both this case and -keys-lone-cr-one-key pass."
+    },
+    {
+      "id": "en-us-markdown-commonmark-frontmatter-keys-lone-cr-ends-the-content",
+      "rule": "quotes",
+      "mode": "markdown",
+      "dialect": "commonmark",
+      "frontmatterKeys": [
+        "title",
+        "slug"
+      ],
+      "in": "---\ntitle: a \"b\"\nslug: c \"d\"\n\r---\n\nBody \"q\" here.\n",
+      "out": "---\ntitle: a “b”\nslug: c \"d\"\n\r---\n\nBody “q” here.\n",
+      "note": "modes.md §3.7.4: the content's last line is a lone U+000D, and `title` converts while `slug` does not. What this case discriminates is an implementation that substitutes the U+000D for another declining character: that converts both keys. What it does NOT discriminate is the per-line filter itself — measured in three ports, `slug` is already silent before the filter runs, because the trailing line is blank and joins `slug`'s value run, which §3.8.6's continuation bail declines. The cases that exercise the filter are -keys-lone-cr-one-key and -keys-lone-cr-costs-one-line."
+    },
+    {
+      "id": "en-us-markdown-commonmark-frontmatter-keys-lone-cr-in-a-value-run",
+      "rule": "dashes",
+      "mode": "markdown",
+      "dialect": "commonmark",
+      "frontmatterKeys": [
+        "summary",
+        "title"
+      ],
+      "in": "---\nsummary: a\rb\n  title: c -- d\n---\n\nBody \"q\" here.\n",
+      "out": "---\nsummary: a\rb\n  title: c -- d\n---\n\nBody “q” here.\n",
+      "note": "modes.md §3.7.4: the decline drops the spans the content scan produced for that line and does not alter the content the scan was given. Here the U+000D sits on a listed key whose value run continues onto a more-indented line, so the scan yields nothing for the block at all — `title` is inside `summary`'s value run, not a key of its own. Substituting the U+000D for U+0009 instead converts `c -- d` and is the divergence this case exists to fail."
+    },
+    {
+      "id": "en-us-markdown-commonmark-frontmatter-byte-order-mark-and-lone-cr",
+      "rule": "quotes",
+      "mode": "markdown",
+      "dialect": "commonmark",
+      "frontmatterKeys": [
+        "title"
+      ],
+      "in": "﻿---\rtitle: a \"b\"\r---\r\rBody \"q\".\r",
+      "out": "﻿---\rtitle: a \"b\"\r---\r\rBody “q”.\r",
+      "note": "modes.md §3.7.3a steps 1 and 5 composed: a byte-order mark in front of a document whose lines end with lone U+000D. Each clause is pinned alone and their combination is where one runtime lost the body entirely — found by an adversarial pass over a finished port, not by any fixture then in the suite. The block is located and skipped, its content is declined for the U+000D, and the body converts."
     }
   ]
 }

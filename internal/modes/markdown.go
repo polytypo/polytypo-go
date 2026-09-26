@@ -142,10 +142,12 @@ func frontmatterLineAt(source string, from int) (line string, next int) {
 // The mark is masked with the block because otherwise the first line of the parser's input is
 // U+FEFF followed by spaces, which is not blank and which goldmark does not strip.
 //
-// The masking is byte-wise where the spec is code-point-wise, so that byte offsets — what goldmark
-// reports and what ByteOffsets maps back to code points — are preserved exactly. A multi-byte code
-// point becomes that many U+0020, and a line of nothing but U+0020 is blank to a parser whatever
-// its length, so the two agree on everything a parser can observe.
+// 3.7.3a requires positional alignment in the unit the runtime maps parser offsets back through.
+// Here that unit is UTF-8 bytes: goldmark reports byte offsets and ByteOffsets maps them against
+// the ORIGINAL source, so what this runtime owes is byte-length preservation, and the mask is
+// byte-wise for that reason. A multi-byte code point becomes that many U+0020, which is not
+// one-space-per-code-point and does not need to be — a line of nothing but U+0020 is blank to a
+// parser whatever its length, so nothing a parser can observe changes.
 func maskFrontmatter(src []byte, block frontmatterBlock) []byte {
 	masked := make([]byte, len(src))
 	copy(masked, src)
@@ -155,6 +157,29 @@ func maskFrontmatter(src []byte, block frontmatterBlock) []byte {
 		}
 	}
 	return masked
+}
+
+// normalizeParserLineTerminators replaces, IN THE PARSER'S INPUT ONLY, every U+000D that is not
+// followed by U+000A with U+000A. One byte for one byte, so every offset the parser reports still
+// indexes the original source, and no U+000D is altered in the result — the output is built from
+// the original.
+//
+// goldmark ends a line at U+000A and nowhere else, while CommonMark and modes.md 3.7.3a step 5
+// both end one at a lone U+000D too. That gap is what makes 3.7.3a's mask unable to keep its own
+// promise: "a masked line is a blank line to every parser" presupposes the parser sees lines
+// there. In a document written with lone U+000D line endings goldmark sees ONE line, so the
+// block's mask is not blank lines at all — it is leading whitespace on the body's line, and four
+// U+0020 of it turn the whole document into an indented code block. Measured: with the U+FEFF
+// masked as well the run reaches six and the body was returned untouched; without the mark it is
+// three and the same document converts. The mark is not special, it is the third and fourth
+// space, and a fence written "--- " reaches four on its own.
+func normalizeParserLineTerminators(src []byte) []byte {
+	for i := 0; i < len(src); i++ {
+		if src[i] == '\r' && (i+1 == len(src) || src[i+1] != '\n') {
+			src[i] = '\n'
+		}
+	}
+	return src
 }
 
 func isTagNameStop(b byte) bool {
@@ -303,6 +328,9 @@ func (w *mdWalker) walk(n ast.Node) {
 // option only ever adds spans where the skip removed them: no source position belongs to both
 // units. A TOML block yields nothing, with the option or without it — its quoting is a second
 // grammar this scan does not claim (modes.md 7.13).
+//
+// A content line carrying a U+000D not followed by U+000A yields no spans (3.7.4, spec 1.8.0) —
+// see declinedContentPositions.
 func FrontmatterSpans(source string, keys map[string]struct{}) []Span {
 	if len(keys) == 0 {
 		return nil
@@ -318,9 +346,14 @@ func FrontmatterSpans(source string, keys map[string]struct{}) []Span {
 	if end <= start {
 		return nil
 	}
-	spans := YAMLSpans(cp[start:end], keys)
+	content := cp[start:end]
+	declined := declinedContentPositions(content)
+	spans := YAMLSpans(content, keys)
 	shifted := make([]Span, 0, len(spans))
 	for _, span := range spans {
+		if touchesDeclinedPosition(declined, span) {
+			continue
+		}
 		shifted = append(shifted, Span{Start: span.Start + start, End: span.End + start})
 	}
 	return shifted
@@ -335,11 +368,16 @@ func MarkdownSpans(source string) ([]Span, error) {
 	// no longer suppresses spans by byte range as well — a masked block is blank lines, so there
 	// is nothing there for the walk to find, and a second mechanism the spec does not describe is
 	// how two runtimes come to skip different things.
+	//
+	// The parser's input is then given the line terminators goldmark understands, which is what
+	// makes "a masked line is a blank line" true here. Both steps are byte-for-byte, so every
+	// offset goldmark reports still indexes the original source, which is what offsets maps.
 	block, hasBlock := detectFrontmatter(source)
 	parsed := src
 	if hasBlock {
 		parsed = maskFrontmatter(src, block)
 	}
+	parsed = normalizeParserLineTerminators(parsed)
 
 	w := &mdWalker{
 		src:     parsed,
@@ -359,4 +397,65 @@ func MarkdownSpans(source string) ([]Span, error) {
 		return nil, w.err
 	}
 	return w.spans, nil
+}
+
+// declinedContentPositions marks every code point of a frontmatter block's content that lies on a
+// line modes.md 3.7.4 declines: a line carrying a U+000D not followed by U+000A. It is the sibling
+// of 3.8.4 step 1's "a line containing U+0009 yields no spans" and exists for the same kind of
+// reason — the two line models meet in the frontmatter block and do not compose. 3.7.3a step 5
+// finds the block in a lone-U+000D document by CommonMark's model, and 3.8.4's LF-only scan then
+// reads that whole block as one line; letting that through is not inert but damaging, since marks
+// pair across what were two mapping lines and the U+000D itself lands inside a span, which 3.8.4
+// forbids. Per line rather than per block, so a stray U+000D inside one quoted value costs that
+// value and not the block.
+//
+// The window tested for each line runs to the START OF THE NEXT LINE, not to the end of this one,
+// because 3.8.4's splitter treats a trailing U+000D as a terminator even with no U+000A after it.
+// A block whose single line ends in one therefore looks clean when the terminator is excluded, and
+// the lone-U+000D fixtures disagree about exactly that.
+//
+// nil means nothing is declined, which is every ordinary document.
+func declinedContentPositions(content []rune) []bool {
+	var declined []bool
+	for lineStart := 0; lineStart < len(content); {
+		nextStart := len(content)
+		for i := lineStart; i < len(content); i++ {
+			if content[i] == '\n' {
+				nextStart = i + 1
+				break
+			}
+		}
+		if hasLoneCarriageReturn(content[lineStart:nextStart]) {
+			if declined == nil {
+				declined = make([]bool, len(content))
+			}
+			for i := lineStart; i < nextStart; i++ {
+				declined[i] = true
+			}
+		}
+		lineStart = nextStart
+	}
+	return declined
+}
+
+// hasLoneCarriageReturn reports whether a run carries a U+000D that is not followed by U+000A.
+func hasLoneCarriageReturn(run []rune) bool {
+	for i, r := range run {
+		if r == '\r' && (i+1 == len(run) || run[i+1] != '\n') {
+			return true
+		}
+	}
+	return false
+}
+
+// touchesDeclinedPosition drops a span that reaches any code point of a declined line. A span
+// covering a multi-line value is dropped when any of its lines is declined: keeping it would put
+// the U+000D inside a span.
+func touchesDeclinedPosition(declined []bool, span Span) bool {
+	for i := span.Start; i < span.End && i < len(declined); i++ {
+		if declined[i] {
+			return true
+		}
+	}
+	return false
 }

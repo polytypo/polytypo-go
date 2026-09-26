@@ -497,3 +497,111 @@ func TestFrontmatterLineModelAcceptsMixedTerminators(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
+
+// spec/rules/modes.md 3.7.4 (spec 1.8.0): a content LINE carrying a U+000D not followed by U+000A
+// yields no spans, the sibling of 3.8.4 step 1's tab rule. The fixtures pin the two documents
+// written wholly with lone U+000D and the one whose `title` carries a stray one; these are the
+// window question and the controls that stop the rule from reading as "any U+000D declines" or "a
+// U+000D anywhere declines the block".
+func TestFrontmatterKeysDeclinesTheLinesCarryingALoneCarriageReturn(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{
+			// The window row. `slug`'s lone U+000D sits where 3.8.4's splitter would read a
+			// terminator, so a test that stops at the end of the line proper sees a clean line and
+			// converts `d`. The clean `title` line above it still converts, which is the per-line
+			// grain: one stray return costs one value.
+			name:   "a line whose terminator is a lone U+000D is the only one declined",
+			source: "---\ntitle: a \"b\"\nslug: c \"d\"\r---\n\nBody \"e\"\n",
+			want:   "---\ntitle: a \u201cb\u201d\nslug: c \"d\"\r---\n\nBody \u201ce\u201d\n",
+		},
+		{
+			// A U+000D mid-content folds two mapping lines into one 3.8.4 line, so the whole block
+			// is that one declined line -- the same reason a wholly lone-U+000D document loses
+			// everything. 3.8.4 would also refuse this shape on its own; the rule is what
+			// guarantees it rather than the scan happening to refuse that particular value.
+			name:   "a U+000D between two mapping lines declines both",
+			source: "---\ntitle: a \"b\"\rslug: c \"d\"\n---\n\nBody \"e\"\n",
+			want:   "---\ntitle: a \"b\"\rslug: c \"d\"\n---\n\nBody \u201ce\u201d\n",
+		},
+		{
+			// Control: every U+000D here is followed by U+000A, so nothing is declined. Without
+			// this row, declining CRLF too would satisfy the rows above.
+			name:   "CRLF content is not declined",
+			source: "---\r\ntitle: a \"b\"\r\nslug: c \"d\"\r\n---\r\n\r\nBody \"e\"\r\n",
+			want:   "---\r\ntitle: a \u201cb\u201d\r\nslug: c \u201cd\u201d\r\n---\r\n\r\nBody \u201ce\u201d\r\n",
+		},
+		{
+			// Control: the test is on the content range, not the document.
+			name:   "a lone U+000D in the body leaves the block alone",
+			source: "---\ntitle: a \"b\"\n---\n\nBody \"c\"\rmore \"d\"\n",
+			want:   "---\ntitle: a \u201cb\u201d\n---\n\nBody \u201cc\u201d\rmore \u201cd\u201d\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := mdOf(t, tc.source, "en-US", []string{"title", "slug"}); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The parser's input gets the line terminators goldmark understands (see
+// normalizeParserLineTerminators). goldmark ends a line at U+000A and nowhere else, so in a
+// document written with lone U+000D endings it sees ONE line and 3.7.3a's mask is not blank lines
+// but leading whitespace on the body's line — four U+0020 of which make the whole document an
+// indented code block and the body unreachable.
+//
+// The conformance fixture pins the U+FEFF composition. These are the rest of the class, which is
+// what shows the mark was never the cause: it is the third and fourth U+0020 of the masked fence,
+// and a fence written "--- " reaches four with no mark at all. Every row but the last was red
+// before the parser's input was normalized.
+func TestLoneCarriageReturnBodyIsReachableWhateverTheFenceMasksTo(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{
+			name:   "a trailing space on the fence reaches four U+0020 with no mark",
+			source: "--- \rtitle: a \"b\"\r---\r\rBody \"q\".\r",
+			want:   "--- \rtitle: a \"b\"\r---\r\rBody “q”.\r",
+		},
+		{
+			name:   "a trailing tab masks to U+0020 and does the same",
+			source: "---\t\rtitle: a \"b\"\r---\r\rBody \"q\".\r",
+			want:   "---\t\rtitle: a \"b\"\r---\r\rBody “q”.\r",
+		},
+		{
+			name:   "a mark and a trailing space together",
+			source: "\uFEFF--- \rtitle: a \"b\"\r---\r\rBody \"q\".\r",
+			want:   "\uFEFF--- \rtitle: a \"b\"\r---\r\rBody “q”.\r",
+		},
+		{
+			// Multi-byte body content: the normalization is one byte for one byte, so the offsets
+			// goldmark reports still index the original source and the span lands on the quotes
+			// rather than beside them.
+			name:   "multi-byte content in the body keeps its offsets",
+			source: "\uFEFF---\rtitle: a \"b\"\r---\r\rCafé au lait \"q\".\r",
+			want:   "\uFEFF---\rtitle: a \"b\"\r---\r\rCafé au lait “q”.\r",
+		},
+		{
+			// Control: three U+0020 is under the indented-code threshold, so this document was
+			// correct before the fix too. It is what made the defect look like a U+FEFF problem.
+			name:   "a bare fence stays under the threshold",
+			source: "---\rtitle: a \"b\"\r---\r\rBody \"q\".\r",
+			want:   "---\rtitle: a \"b\"\r---\r\rBody “q”.\r",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := mdOf(t, tc.source, "en-US", nil); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

@@ -549,14 +549,33 @@ that no author typed on purpose, and both were conformant, because no fixture pi
 > scan is what a fixture pins and what a disagreement is measured against.
 >
 > **And the parser is handed the block masked out.** The source given to the Markdown parser is the
-> document with every code point of the located block — both delimiter lines included, **and the
-> leading U+FEFF of step 1 if there is one** — replaced by U+0020, line terminators kept as they
-> are. Offsets are therefore unchanged, a masked line is a blank line to every parser, and nothing
+> document with the located block — both delimiter lines included, **and the leading U+FEFF of step
+> 1 if there is one** — replaced by U+0020, line terminators kept as they are, so that nothing
 > inside the block can form or close a construct in the body.
 >
-> The mark is in that list because leaving it out makes the sentence before this one false: a first
-> line of U+FEFF followed by spaces is not blank, no parser is required to strip the mark, and
-> goldmark does not — so a runtime that masks the block and nothing else emits a span for it.
+> **The masked source must be positionally aligned with the original in the unit the runtime maps
+> parser offsets back through.** That is the invariant, and it is not the same as "one U+0020 per
+> code point": a runtime that hands its parser's byte offsets straight through owes byte-length
+> preservation, and masking `😀` to a single space shortens its source by three and shifts every
+> body offset after it. A runtime that converts offsets against the **masked** source before
+> reading them against the original owes code-point alignment only, which one U+0020 per code point
+> gives it — and in a language whose strings are sequences of code points, byte-length preservation
+> cannot even be expressed. Both are conformant; stating it as an index-unit count was not, and the
+> port that indexes code points while its parser counts bytes is what showed it.
+>
+> **And no span may lie inside the block, whatever the parser did with the masked text.** Masking
+> is what makes that true for most parsers and it is not sufficient for all of them: measured,
+> tree-sitter-markdown reads a final all-space line with no terminator as a paragraph, so a
+> document whose closing `---` ends the file comes back with a span over the delimiter itself —
+> the parser did not see the block at all, and step 5's "end of input ends a line" is the clause it
+> does not implement. A runtime whose parser emits such a span **clips it to the part outside the
+> block, and drops it when nothing is left**: the block's own characters must not reach the rules,
+> and body prose past the block must not be lost to a parser's mistake about where the block ended.
+> The mask is there so the parse is not deformed; this rule is there so the spans cannot be wrong
+> even when it is.
+>
+> The mark is masked with the block because leaving it out breaks both: a first line of U+FEFF
+> followed by spaces is not blank, no parser is required to strip the mark, and goldmark does not.
 
 Masking is not an implementation note, and the runtime that skipped it is measured. Suppressing a
 span inside the block's range is not enough, because the parser has already read the block's
@@ -681,6 +700,35 @@ already recognises, and the option only changes what happens inside it:
   terminator to the code point that begins the closing delimiter line. A U+000D before that
   terminator belongs to the terminator, exactly as in §3.8.4, so a CRLF document and the same
   bytes with LF give the same content;
+- **a line of that content containing a U+000D not followed by U+000A yields no spans**, exactly
+  as §3.8.4 step 1 already declines a line containing U+0009 and for the same kind of reason. The
+  two line models meet here and do not compose: §3.7.3a step 5 finds the block in a lone-U+000D
+  document, and §3.8.4's LF-only scan then reads that whole block as one line. Measured, the
+  result of letting it through is not merely inert — `title: a "b` and `c" d` on two mapping
+  lines pair their marks across the boundary, an unlisted line inside the listed key's scalar
+  takes `fr`'s spacing, and the U+000D lands **inside a span**, which §3.8.4 forbids in the same
+  breath. Per line rather than per block, because a stray U+000D inside one quoted value is
+  something people produce by accident and it should cost that value rather than the whole block:
+  a lone-U+000D document is one §3.8.4 line and loses everything, a document with one such value
+  loses that line and keeps the rest. **The test runs to the start of the next line, not to the
+  end of this one**, because §3.8.4's own splitter treats a trailing U+000D as a terminator even
+  without a U+000A after it — so a block whose single line ends in one looks clean if the
+  terminator is excluded, and one of the four lone-U+000D fixtures separates the two readings.
+  **The decline drops the spans the content scan produced for that line; it does not alter the
+  content the scan is given, and a span reaching a declined position is dropped whole rather than
+  trimmed.** Three ports reached for the shortcut of substituting the U+000D for another
+  character the scan already declines, and it is not equivalent: substitution moves the character
+  to a different line and can end a value run, so `title` / `slug` / a content-final U+000D
+  converts both keys instead of one, and a stray U+000D on a key whose value run continues onto
+  an indented line converts a key that is not a key. Both shapes are pinned, and both agree with
+  what `yaml` mode already does with the same characters — measured in two shipped runtimes.
+  **Where this rule and `yaml` mode part is on purpose, and it is one shape:** a content line
+  whose terminator is a bare U+000D is clean to `yaml` mode, which strips it, and declined here,
+  because the window includes it. So `title` / `slug` / a content-final U+000D converts `slug` in
+  `yaml` mode and does not here. The wider decline is the direction this section takes everywhere
+  else — a miss is invisible, a U+000D inside a span is not — and the cost is conversions lost in
+  documents written with line endings from the last century. Widening §3.8.4 instead would be a
+  change to `yaml` mode for every caller and wants its own measurement;
 - **both delimiter lines stay outside every span**, as does every line terminator, so no edit
   can reach `---` itself and §3.7.3's setext-underline hazard is unreachable;
 - an **unterminated** block is not a block — §3.7.3 already yields no frontmatter construct
@@ -696,9 +744,12 @@ already recognises, and the option only changes what happens inside it:
 unterminated one, a `---` that is not at the start of the document, an opening line carrying
 anything but whitespace — the text is ordinary prose in the body's own unit and the option
 contributes nothing. That coupling is what makes double processing unreachable: no source position
-can belong to both units. **Since 1.8.0 the block's extent is §3.7.3a's scan** rather than whatever
-each parser's frontmatter support decided, so the option no longer inherits a variance that was
-measured at two runtimes out of four.
+can belong to both units — **and since 1.8.0 it is §3.7.3a's mask and its no-span rule that enforce
+it**, not an agreement between two locators. Measured while that mask was still being specified, a
+block whose closer the body's parser did not accept had its content emitted twice, once by each
+unit: `more: b - c` came back as `more: b—cb—c`. **Since 1.8.0 the block's extent is §3.7.3a's
+scan** rather than whatever each parser's frontmatter support decided, so the option no longer
+inherits a variance that was measured in eleven documents out of twenty.
 
 **Key matching is §3.8.2's, which means bare names at any depth.** `title` is processable wherever
 it occurs in the block, `seo.title` included — measured: `seo:` then an indented `title:` is
@@ -1566,14 +1617,17 @@ rule-local.
       with the two that declined the block typesetting the metadata. The locator is now
       specified, which is where it belonged: it governs the skip for every caller, not only
       those who pass the option.
-    - **A lone-U+000D document has a block, and `frontmatterKeys` is inert inside it** as soon as
-      the block carries more than one line. §3.7.3a step 5 finds the block by CommonMark's line
-      model; §3.8.4 then reads the content by its own, sees no U+000A, and treats the whole block
-      as one line — which yields a span only when that line is itself a single `key: value`.
-      Measured on 1.7.0: `title` converts in a one-line block and nothing converts in a two-line
-      one. It fails safe — nothing machine-read is typeset, and the block is still skipped — and
-      it is the price of not widening §3.8.4 here. Widening it would be a change to `yaml` mode
-      for every caller.
+    - **A lone-U+000D document has a block, and `frontmatterKeys` yields nothing inside it.**
+      §3.7.3a step 5 finds the block by CommonMark's line model and §3.8.4 reads content by its
+      own, so the block reaches the content scan as a single line. An earlier draft let that
+      stand and called it inert; measuring it showed it was not. On two mapping lines a quotation
+      opened on one paired with a mark on the other, an unlisted line inside the listed key's
+      scalar took `fr`'s spacing, and the U+000D landed inside a span — which §3.8.4 forbids in
+      the same breath. §3.7.4 therefore declines any content line carrying such a U+000D — per
+      line, so that a stray one inside a single quoted value costs that value and not the block.
+      The block is still skipped, so nothing machine-read is typeset either way. A lone-U+000D
+      document is one line to §3.8.4 and therefore loses the whole block, which is the price of
+      not widening that section here.
     - **§3.8.6's single-quoted bail costs more here than anywhere it has been measured before.**
       Of the 1858 corpus values a locale would convert across eight locales, **1040 yield no spans
       when written as a single-quoted scalar** — 130 of 247 in `en-GB` alone, the figure 1.7.0

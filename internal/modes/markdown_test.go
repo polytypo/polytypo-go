@@ -52,3 +52,42 @@ func TestMarkdownSmoke(t *testing.T) {
 		})
 	}
 }
+
+// spec/rules/modes.md 3.7.3a (spec 1.8.0) states an outcome as well as a mechanism: no span may lie
+// inside the block, whatever the parser did with the masked text. goldmark needs no clip on top of
+// the mask to satisfy it, which is why MarkdownSpans carries none — but that is a measurement about
+// goldmark, not something the spec guarantees, so it is asserted here rather than assumed. The
+// shapes are the ones where a parser is most likely to make something of an all-U+0020 region: a
+// block that is the whole document, one abutting the body, an empty one, and one whose masked text
+// would have opened a construct.
+func TestNoSpanLiesInsideAMaskedFrontmatterBlock(t *testing.T) {
+	sources := []string{
+		"---\ntitle: \"x\"\n---\n\nBody \"q\".\n",
+		"---\ntitle: \"x\"\n---\nAbutting body \"q\".\n",
+		"---\ntitle: \"x\"\n---\n",
+		"---\n---\n\nBody \"q\".\n",
+		"---\nx: |\n  ```\n---\n\nBody \"q\".\n",
+		"--- \t\nx: <div>\n--- \n\nBody \"q\".\n",
+		"\uFEFF---\ntitle: \"x\"\n---\n\nBody \"q\".\n",
+		"---\r\ntitle: \"x\"\r\n---\r\n\r\nBody \"q\".\r\n",
+		"---\rtitle: \"x\"\r---\r\rBody \"q\".\r",
+		"+++ \ntitle = \"x\"\n+++\n\nBody \"q\".\n",
+	}
+	for _, source := range sources {
+		block, ok := detectFrontmatter(source)
+		if !ok {
+			t.Fatalf("%q: no block located, so the case does not test what it claims", source)
+		}
+		spans, err := MarkdownSpans(source)
+		if err != nil {
+			t.Fatalf("%q: %v", source, err)
+		}
+		limit := NewByteOffsets([]rune(source)).CodePointOf(block.end)
+		for _, span := range spans {
+			if span.Start < limit {
+				t.Errorf("%q: span %d..%d starts inside the masked block (ends at code point %d)",
+					source, span.Start, span.End, limit)
+			}
+		}
+	}
+}
