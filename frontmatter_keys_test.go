@@ -318,3 +318,182 @@ func TestBoundedSweepMarkdownFrontmatterTwoUnits(t *testing.T) {
 		t.Fatalf("non-idempotent frontmatter documents:\n%s", strings.Join(broken, "\n"))
 	}
 }
+
+// spec/rules/modes.md 3.7.3a -- where the block begins and ends (spec 1.8.0). The fixtures pin one
+// trailing space on each fence and one trailing tab on the opener; these are the neighbouring
+// shapes an author's editor produces, which a fixture would only restate. Every positive row
+// carries a body that does change, so a row cannot pass by nothing running at all.
+func TestFrontmatterFenceAcceptsTrailingSpacesAndTabs(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{
+			name:   "several trailing spaces on the opener",
+			source: "---   \ntitle: \"Une note\"\n---\n\nBody has \"quotes\" here.\n",
+			want:   "---   \ntitle: \"Une note\"\n---\n\nBody has “quotes” here.\n",
+		},
+		{
+			name:   "tabs on the opener",
+			source: "---\t\t\ntitle: \"Une note\"\n---\n\nBody has \"quotes\" here.\n",
+			want:   "---\t\t\ntitle: \"Une note\"\n---\n\nBody has “quotes” here.\n",
+		},
+		{
+			name:   "spaces and tabs mixed on the opener",
+			source: "--- \t \ntitle: \"Une note\"\n---\n\nBody has \"quotes\" here.\n",
+			want:   "--- \t \ntitle: \"Une note\"\n---\n\nBody has “quotes” here.\n",
+		},
+		{
+			name:   "trailing whitespace on the closer only",
+			source: "---\ntitle: \"Une note\"\n--- \t\n\nBody has \"quotes\" here.\n",
+			want:   "---\ntitle: \"Une note\"\n--- \t\n\nBody has “quotes” here.\n",
+		},
+		{
+			name:   "a CRLF document whose opening fence carries a trailing space",
+			source: "--- \r\ntitle: \"Une note\"\r\n---\r\n\r\nBody has \"quotes\" here.\r\n",
+			want:   "--- \r\ntitle: \"Une note\"\r\n---\r\n\r\nBody has “quotes” here.\r\n",
+		},
+		{
+			name:   "a TOML fence carrying a trailing space",
+			source: "+++ \ntitle = \"Une note\"\n+++\n\nBody has \"quotes\" here.\n",
+			want:   "+++ \ntitle = \"Une note\"\n+++\n\nBody has “quotes” here.\n",
+		},
+		{
+			// 3.7.3a step 2: the wider reading widens the whitespace, not the syntax.
+			name:   "a word after the opening delimiter is not a block",
+			source: "--- yaml\ntitle: \"Une note\"\n---\n\nBody has \"quotes\" here.\n",
+			want:   "--- yaml\ntitle: “Une note”\n---\n\nBody has “quotes” here.\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := mdOf(t, tc.source, "en-US", nil); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The widened fence and FrontmatterKeys read the same scan (modes.md 3.7.3a, 3.7.4), so the option
+// reaches a block a trailing space would have hidden -- and the fence's own whitespace, including
+// the U+000D of a CRLF document, stays outside the content range and comes back byte for byte.
+func TestFrontmatterKeysReachesABlockWithAWidenedFence(t *testing.T) {
+	source := "--- \r\ntitle: a \"b\"\r\n--- \t\r\n\r\nBody \"c\"\r\n"
+	spans := modes.FrontmatterSpans(source, map[string]struct{}{"title": {}})
+	cp := []rune(source)
+	var got []string
+	for _, span := range spans {
+		got = append(got, string(cp[span.Start:span.End]))
+	}
+	if len(got) != 1 || got[0] != "a \"b\"" {
+		t.Fatalf("spans = %q, want [`a \"b\"`]", got)
+	}
+	want := "--- \r\ntitle: a “b”\r\n--- \t\r\n\r\nBody “c”\r\n"
+	if out := mdOf(t, source, "en-US", []string{"title"}); out != want {
+		t.Fatalf("got %q, want %q", out, want)
+	}
+}
+
+// spec/rules/modes.md 3.7.3a: the source handed to the parser is the document with the block
+// masked to U+0020, so nothing inside it can form or close a construct in the body. The fixtures
+// pin the fenced-code case in YAML; these are the other shapes a metadata value can carry into the
+// parser, and the conversion of the body is what proves the mask rather than a range suppression.
+func TestFrontmatterIsMaskedBeforeTheParserSeesIt(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{
+			// The discriminating shape: with the block unmasked the parser paired this fence with
+			// nothing and swallowed the rest of the document into a code block, so the body was
+			// missed entirely. Measured on the shipped 1.7.0 locator.
+			name:   "an unterminated fence in a metadata value does not swallow the body",
+			source: "---\nx: |\n  ```\n---\n\nBody \"q\" here.\n",
+			want:   "---\nx: |\n  ```\n---\n\nBody \u201cq\u201d here.\n",
+		},
+		{
+			name:   "a fence inside a TOML value does not pair with the body's",
+			source: "+++ \nx = \"\"\"\n```\n\"\"\"\n+++\n\n```\ncode \"q\"\n```\n\nBody \"q\".\n",
+			want:   "+++ \nx = \"\"\"\n```\n\"\"\"\n+++\n\n```\ncode \"q\"\n```\n\nBody \u201cq\u201d.\n",
+		},
+		{
+			// Not a shape the old locator got wrong -- a guard on the mask itself. maskFrontmatter
+			// is byte-wise where 3.7.3a is code-point-wise, so a multi-byte code point becomes that
+			// many U+0020 and the body's offsets are unmoved; a code-point-wise mask would shift
+			// every span after the block.
+			name:   "multi-byte code points in the block leave the body's offsets where they were",
+			source: "---\ntitle: \u00dcn\u00ef \u2014 \u00e7\u00e0 \"x\"\n---\n\nBody \"q\" here.\n",
+			want:   "---\ntitle: \u00dcn\u00ef \u2014 \u00e7\u00e0 \"x\"\n---\n\nBody \u201cq\u201d here.\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := mdOf(t, tc.source, "en-US", nil); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// 3.7.3a step 1: a single leading U+FEFF is stepped over and is not part of the document for the
+// scan. The fixtures pin the two documents that gain a block by it; these are the ones that must
+// not.
+func TestFrontmatterStepsOverASingleByteOrderMarkOnly(t *testing.T) {
+	bom := string(rune(0xFEFF))
+	cases := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{
+			name:   "a mark does not widen step 2",
+			source: bom + "--- yaml\ntitle: a \"b\"\n---\n\nBody \"c\"\n",
+			want:   bom + "--- yaml\ntitle: a “b”\n---\n\nBody “c”\n",
+		},
+		{
+			name:   "a second mark is content, so there is no block",
+			source: bom + bom + "---\ntitle: a \"b\"\n---\n\nBody \"c\"\n",
+			want:   bom + bom + "---\ntitle: a “b”\n---\n\nBody “c”\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := mdOf(t, tc.source, "en-US", nil); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The mark is stepped over by the locator, so the content range -- and every span FrontmatterKeys
+// takes from it -- is still measured in the real document. A block located three bytes early would
+// shift every span by three.
+func TestFrontmatterKeysLocatesTheContentPastAByteOrderMark(t *testing.T) {
+	source := string(rune(0xFEFF)) + "--- \ntitle: a \"b\"\n---\n\nBody \"c\"\n"
+	spans := modes.FrontmatterSpans(source, map[string]struct{}{"title": {}})
+	cp := []rune(source)
+	var got []string
+	for _, span := range spans {
+		got = append(got, string(cp[span.Start:span.End]))
+	}
+	if len(got) != 1 || got[0] != "a \"b\"" {
+		t.Fatalf("spans = %q, want [`a \"b\"`]", got)
+	}
+	want := string(rune(0xFEFF)) + "--- \ntitle: a “b”\n---\n\nBody “c”\n"
+	if out := mdOf(t, source, "en-US", []string{"title"}); out != want {
+		t.Fatalf("got %q, want %q", out, want)
+	}
+}
+
+// 3.7.3a step 5: the locator ends a line the way CommonMark does. The fixtures pin a lone-CR
+// document and a final U+000D with no newline; this is the mixed document, where one line ends
+// CRLF and the next LF, and the CR of a CRLF closer is still not part of the delimiter line.
+func TestFrontmatterLineModelAcceptsMixedTerminators(t *testing.T) {
+	source := "---\r\ntitle: a \"b\"\n--- \r\n\r\nBody \"c\"\n"
+	want := "---\r\ntitle: a \"b\"\n--- \r\n\r\nBody “c”\n"
+	if got := mdOf(t, source, "en-US", nil); got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
