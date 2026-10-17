@@ -318,26 +318,36 @@ func yamlBlockScalar(cp []rune, lines []yamlLine, li, runEnd, indent, v int, spa
 	}
 }
 
-// yamlQuotedScalar is 3.8.6. The span is the content between the quotes. Both bails exist so that
-// source characters and content characters are the same thing, which the offset model of 3.1
-// requires — the same constraint that makes an HTML character reference an opaque unit in 3.6. No
-// colon test applies here: quoting neutralises the colon, and applying the plain-scalar test would
-// decline `title: "Chapter 1: the beginning"`.
+// yamlQuotedScalar is 3.8.6. The spans are the content between the quotes. A backslash in a
+// double-quoted scalar is a bail, so that source characters and content characters are the same
+// thing, which the offset model of 3.1 requires — the same constraint that makes an HTML character
+// reference an opaque unit in 3.6. A doubled apostrophe in a single-quoted scalar is that opaque
+// unit: it lies outside every span and the scalar's range is split around it. No colon test applies
+// here: quoting neutralises the colon, and applying the plain-scalar test would decline
+// `title: "Chapter 1: the beginning"`.
 func yamlQuotedScalar(cp []rune, line yamlLine, v int, spans *[]Span) {
 	quote := cp[v]
 	closeAt := -1
+	segment := v + 1
+	var found []Span
 	for j := v + 1; j < line.end; j++ {
 		c := cp[j]
 		if quote == dquote && c == backsl {
 			return
 		}
-		if quote == squote && c == squote && j+1 < line.end && cp[j+1] == squote {
-			return
+		if c != quote {
+			continue
 		}
-		if c == quote {
-			closeAt = j
-			break
+		if quote == squote && j+1 < line.end && cp[j+1] == squote {
+			if j > segment {
+				found = append(found, Span{Start: segment, End: j})
+			}
+			segment = j + 2
+			j++
+			continue
 		}
+		closeAt = j
+		break
 	}
 	if closeAt < 0 {
 		return
@@ -351,9 +361,10 @@ func yamlQuotedScalar(cp []rune, line yamlLine, v int, spans *[]Span) {
 		return
 	}
 
-	if closeAt > v+1 {
-		*spans = append(*spans, Span{Start: v + 1, End: closeAt})
+	if closeAt > segment {
+		found = append(found, Span{Start: segment, End: closeAt})
 	}
+	*spans = append(*spans, found...)
 }
 
 // yamlPlainScalar is 3.8.6. In a plain scalar ':' and '#' are still live: U+0020 beside either of

@@ -90,7 +90,6 @@ func TestYAMLSkipsByDefault(t *testing.T) {
 		"an alias":                              "a: *anchor\n",
 		"a tag":                                 "a: !!str one two...\n",
 		"a double-quoted scalar with an escape": "a: \"one \\\"two\\\"... three\"\n",
-		"a single-quoted scalar with an escape": "a: 'it''s one two...'\n",
 		"a tab anywhere on the line":            "a:\tone two...\n",
 		"a compact nested sequence":             "a: - one two...\n",
 		"a compact nested mapping":              "a: one two .:\n",
@@ -110,6 +109,36 @@ func TestYAMLSkipsByDefault(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if got := spanText(source, proseKeys()); len(got) != 0 {
 				t.Fatalf("spans = %q, want none", got)
+			}
+		})
+	}
+}
+
+func TestYAMLSingleQuotedEscapeSplitsTheRange(t *testing.T) {
+	// 3.8.6: a doubled apostrophe is an opaque unit outside every span.
+	cases := []struct {
+		name   string
+		source string
+		want   []string
+	}{
+		{"one pair mid-scalar", "a: 'it''s one...two'\n", []string{"it", "s one...two"}},
+		{"pairs at both ends", "a: '''one...two'''\n", []string{"one...two"}},
+		{"only a pair", "a: ''''\n", nil},
+		{"two pairs", "a: ''''''\n", nil},
+		{"empty scalar", "a: ''\n", nil},
+		{"unterminated", "a: 'it''s one...two\n", nil},
+		{"comment after close", "a: 'it''s one...two' # note\n", []string{"it", "s one...two"}},
+		{"junk after close", "a: 'it''s one...two' x\n", nil},
+		{"double quotes unchanged", "a: \"it's one...two\"\n", []string{"it's one...two"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := spanText(c.source, proseKeys())
+			if len(c.want) == 0 && len(got) == 0 {
+				return
+			}
+			if !eq(got, c.want) {
+				t.Fatalf("spans = %q, want %q", got, c.want)
 			}
 		})
 	}
