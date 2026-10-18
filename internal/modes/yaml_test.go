@@ -190,3 +190,61 @@ func TestYAMLPlainScalarSplitsAtColonAndHash(t *testing.T) {
 		t.Fatalf("no colon test applies to a quoted scalar: got %q", got)
 	}
 }
+
+func TestYAMLLoneCarriageReturnDeclinesTheLine(t *testing.T) {
+	keys := keySet("title", "summary")
+	cases := []struct {
+		name, source string
+		want         []string
+	}{
+		{"lone CR inside a plain scalar", "title: a\rb -- c\n", []string{}},
+		{"CR as the final terminator", "title: a -- b\r", []string{"a -- b"}},
+		{"CR then CR at the end", "title: a -- b\r\r", []string{}},
+		{"CR then CRLF", "title: a -- b\r\r\n", []string{}},
+		{"CRLF document", "title: a -- b\r\nsummary: c -- d\r\n", []string{"a -- b", "c -- d"}},
+		{"block scalar line with a CR", "title: |\n  a -- b\n  c\rd -- e\n", []string{}},
+		{"value run consumed", "summary: a\rb\n  title: c -- d\n", []string{}},
+		{"blank test does not strip CR", "title: |\n  a -- b\n\r  \n  c -- d\n", []string{"a -- b"}},
+	}
+	for _, c := range cases {
+		if got := spanText(c.source, keys); !eq(got, c.want) {
+			t.Errorf("%s: %q -> %q, want %q", c.name, c.source, got, c.want)
+		}
+	}
+}
+
+// modes.md 3.8.4 and 5 (1.10.0): no span contains a line terminator. A rule neither emits nor
+// deletes a U+000D, so the output cannot show the violation; the spans have to be read directly.
+func TestYAMLNoSpanContainsALineTerminator(t *testing.T) {
+	alphabet := []string{"a", " ", "\r", "\n", ":", "#", "'", "\"", "-", "|"}
+	templates := []func(p string) string{
+		func(p string) string { return "title: " + p + "\n" },
+		func(p string) string { return "title: \"" + p + "\"\n" },
+		func(p string) string { return "title: '" + p + "'\n" },
+		func(p string) string { return "title: |\n  " + p + "\n" },
+		func(p string) string { return "title: " + p },
+		func(p string) string { return p + "\ntitle: a\n" },
+		func(p string) string { return "title: a\r\n  " + p + "\r\n" },
+	}
+	keys := keySet("title")
+	var walk func(prefix string, depth int)
+	walk = func(prefix string, depth int) {
+		for _, tpl := range templates {
+			cp := []rune(tpl(prefix))
+			for _, s := range YAMLSpans(cp, keys) {
+				for i := s.Start; i < s.End; i++ {
+					if cp[i] == '\r' || cp[i] == '\n' {
+						t.Fatalf("span %d-%d of %q contains a line terminator", s.Start, s.End, string(cp))
+					}
+				}
+			}
+		}
+		if depth == 0 {
+			return
+		}
+		for _, tok := range alphabet {
+			walk(prefix+tok, depth-1)
+		}
+	}
+	walk("", 4)
+}

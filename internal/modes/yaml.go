@@ -84,6 +84,15 @@ func yamlBlank(cp []rune, line yamlLine) bool {
 	return yamlFirstNonSpace(cp, line) == line.end
 }
 
+func yamlHasCR(cp []rune, line yamlLine) bool {
+	for i := line.start; i < line.end; i++ {
+		if cp[i] == cr {
+			return true
+		}
+	}
+	return false
+}
+
 func yamlHasTab(cp []rune, line yamlLine) bool {
 	for i := line.start; i < line.end; i++ {
 		if cp[i] == tab {
@@ -228,7 +237,14 @@ func scanYAMLLine(cp []rune, lines []yamlLine, li int, keys map[string]struct{},
 		return next
 	}
 
-	// step 9 — the scalar form.
+	// step 9 — a U+000D inside the line is a lone carriage return, which is not a terminator and
+	// cannot be inside a span. The value run is still consumed, as in step 8; this precedes the
+	// form switch below.
+	if yamlHasCR(cp, line) {
+		return next
+	}
+
+	// the scalar form, still step 9.
 	switch cp[v] {
 	case hash, ampers, star, bang, lbrace, lbracket:
 		return next
@@ -280,7 +296,7 @@ func yamlBlockScalar(cp []rune, lines []yamlLine, li, runEnd, indent, v int, spa
 		return
 	}
 
-	// One definition of the run, and three conditions that make the whole block yield no spans.
+	// One definition of the run, and four conditions that make the whole block yield no spans.
 	content := make([]yamlLine, 0, 8)
 	contentIndent := -1
 	for k := li + 1; k < runEnd; k++ {
@@ -288,7 +304,7 @@ func yamlBlockScalar(cp []rune, lines []yamlLine, li, runEnd, indent, v int, spa
 		if yamlBlank(cp, next) {
 			continue // blank lines belong to the block and yield no span
 		}
-		if yamlHasTab(cp, next) {
+		if yamlHasTab(cp, next) || yamlHasCR(cp, next) {
 			return
 		}
 		nextIndent := yamlFirstNonSpace(cp, next) - next.start

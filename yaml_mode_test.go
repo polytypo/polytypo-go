@@ -153,3 +153,24 @@ func TestEdgeGrowthCharacterClause(t *testing.T) {
 		t.Fatalf("a U+0020 replacing a U+0020 changes no edge, got %q", spanning)
 	}
 }
+
+func TestYAMLLoneCarriageReturnThroughTheAPI(t *testing.T) {
+	cases := []struct{ in, out string }{
+		{"title: a\rb -- c\n", "title: a\rb -- c\n"},
+		{"title: a -- b\r", "title: a—b\r"},
+		{"title: a -- b\r\r", "title: a -- b\r\r"},
+		{"title: a -- b\r\r\n", "title: a -- b\r\r\n"},
+		{"title: a -- b\r\n", "title: a—b\r\n"},
+		{"title: |\n  a -- b\n  c\rd -- e\n", "title: |\n  a -- b\n  c\rd -- e\n"},
+		{"title: |\n  a -- b\n\r  \n  c -- d\n", "title: |\n  a—b\n\r  \n  c -- d\n"},
+	}
+	for _, c := range cases {
+		if got := yamlOf(t, c.in, "en-US", []string{"title"}); got != c.out {
+			t.Errorf("%q -> %q, want %q", c.in, got, c.out)
+		}
+	}
+	in := "summary: a\rb\n  title: c -- d\n"
+	if got := yamlOf(t, in, "en-US", []string{"title", "summary"}); got != in {
+		t.Errorf("%q -> %q, want unchanged", in, got)
+	}
+}

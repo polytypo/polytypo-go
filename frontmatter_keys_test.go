@@ -233,7 +233,9 @@ func TestFrontmatterKeysAnalyzeReportsBothUnitsInDocumentOrder(t *testing.T) {
 // each unit is.
 func TestBoundedSweepMarkdownFrontmatterTwoUnits(t *testing.T) {
 	locales := allLocales(t)
-	alphabet := []string{"\"", "'", "-", ":", "#", " ", ".", "a", "---"}
+	// "\r" replaced "." here in spec 1.10.0 (modes.md 5 requires U+000D in the yaml-scan sweeps) so the
+	// document count stays what it was; ellipsis is still reached through the bodies.
+	alphabet := []string{"\"", "'", "-", ":", "#", " ", "\r", "a", "---"}
 	templates := []struct {
 		label string
 		of    func(a, b string) string
