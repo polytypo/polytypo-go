@@ -84,6 +84,17 @@ func yamlBlank(cp []rune, line yamlLine) bool {
 	return yamlFirstNonSpace(cp, line) == line.end
 }
 
+// yamlHasContinuation is 3.8.4 step 7: a line of the value run that is not blank. Blank lines
+// alone are not one.
+func yamlHasContinuation(cp []rune, lines []yamlLine, li, runEnd int) bool {
+	for k := li + 1; k < runEnd; k++ {
+		if !yamlBlank(cp, lines[k]) {
+			return true
+		}
+	}
+	return false
+}
+
 func yamlHasCR(cp []rune, line yamlLine) bool {
 	for i := line.start; i < line.end; i++ {
 		if cp[i] == cr {
@@ -159,7 +170,99 @@ func YAMLSpans(cp []rune, keys map[string]struct{}) []Span {
 	for li := 0; li < len(lines); {
 		li = scanYAMLLine(cp, lines, li, keys, &spans)
 	}
-	return spans
+	return dropYAMLCarriageReturnRegions(cp, lines, spans)
+}
+
+// dropYAMLCarriageReturnRegions is 3.8.4's carriage-return region: a line containing a U+000D
+// yields no spans, and neither does any later line up to the first one that is non-empty, does
+// not begin with U+0020 and contains none. It removes spans and never adds one.
+func dropYAMLCarriageReturnRegions(cp []rune, lines []yamlLine, spans []Span) []Span {
+	declined := make([]bool, len(lines))
+	inRegion, any := false, false
+	for i, line := range lines {
+		if yamlHasCR(cp, line) {
+			inRegion = true
+		} else if line.end > line.start && cp[line.start] != ' ' {
+			inRegion = false
+		}
+		declined[i] = inRegion
+		any = any || inRegion
+	}
+	if !any {
+		return spans
+	}
+	kept := spans[:0:0]
+	li := 0
+	for _, span := range spans {
+		for li+1 < len(lines) && span.Start >= lines[li+1].start {
+			li++
+		}
+		if !declined[li] {
+			kept = append(kept, span)
+		}
+	}
+	return kept
+}
+
+// yamlClosingQuote is 3.8.4 step 5: the index of the quote that closes the one at q, or -1. A
+// double-quoted scalar a U+005C and the code point after it never close the quote, which decodes
+// nothing: no YAML escape ends in anything that would be a closing quote. A quote not closed on
+// the line returns -1.
+func yamlClosingQuote(cp []rune, line yamlLine, q int) int {
+	quote := cp[q]
+	for j := q + 1; j < line.end; j++ {
+		c := cp[j]
+		if quote == dquote && c == backsl {
+			j++
+			continue
+		}
+		if c != quote {
+			continue
+		}
+		if quote == squote && j+1 < line.end && cp[j+1] == squote {
+			j++
+			continue
+		}
+		return j
+	}
+	return -1
+}
+
+// yamlDocumentRunEnd is 3.8.4 step 3: the next line that begins in column 0 with a document marker.
+func yamlDocumentRunEnd(cp []rune, lines []yamlLine, li int) int {
+	k := li + 1
+	for k < len(lines) {
+		if yamlDocumentMarker(cp, lines[k].start, lines[k].end) {
+			break
+		}
+		k++
+	}
+	return k
+}
+
+// yamlOwnLineRunEnd is 3.8.4 step 5's own-line node: everything up to the first later line that is
+// non-empty and does not begin with U+0020, because the scan does not track the key above.
+func yamlOwnLineRunEnd(cp []rune, lines []yamlLine, li, indent int) int {
+	if indent == 0 {
+		return yamlDocumentRunEnd(cp, lines, li)
+	}
+	k := li + 1
+	for k < len(lines) {
+		next := lines[k]
+		if next.end > next.start && cp[next.start] != sp {
+			break
+		}
+		k++
+	}
+	return k
+}
+
+// yamlNodeMarker is 3.8.4 step 4: "-", "?" or ":" followed by U+0020 or the line end.
+func yamlNodeMarker(cp []rune, j, to int) bool {
+	if cp[j] != dash && cp[j] != '?' && cp[j] != colon {
+		return false
+	}
+	return j+1 == to || cp[j+1] == sp
 }
 
 // scanYAMLLine is one step of 3.8.4. It returns the index of the next line to scan.
@@ -167,56 +270,100 @@ func scanYAMLLine(cp []rune, lines []yamlLine, li int, keys map[string]struct{},
 	line := lines[li]
 	skipLine := li + 1
 
-	// step 1 — blank, or a tab anywhere, which makes indentation undecidable.
+	// step 1 — blank. A tab makes indentation undecidable, so the line and whatever it absorbs
+	// yield no spans, but steps 2 to 7 still decide what it absorbs.
 	start := yamlFirstNonSpace(cp, line)
-	if start == line.end || yamlHasTab(cp, line) {
+	if start == line.end {
 		return skipLine
 	}
+	quiet := yamlHasTab(cp, line)
 	indent := start - line.start
 
-	// steps 2 and 3 — comment, directive, document marker.
+	// steps 2 and 3 — comment, directive, document marker. A marker with a node after it absorbs
+	// the document.
 	if cp[start] == hash || cp[start] == percent {
 		return skipLine
 	}
 	if yamlDocumentMarker(cp, start, line.end) {
+		p := start + 3
+		for p < line.end && cp[p] == sp {
+			p++
+		}
+		if p >= line.end || cp[p] == hash {
+			return skipLine
+		}
+		if indent == 0 {
+			return yamlDocumentRunEnd(cp, lines, li)
+		}
 		return skipLine
 	}
 
-	// step 4 — block sequence entries are consumed, not skipped; "- - key: v" nests.
+	// step 4 — node markers are consumed, not skipped; "- - key: v" nests.
 	i := start
-	for i < line.end && yamlSequenceDash(cp, i, line.end) {
+	for i < line.end && yamlNodeMarker(cp, i, line.end) {
 		i += 2
 		for i < line.end && cp[i] == sp {
 			i++
 		}
 	}
-	if i >= line.end {
+	if i >= line.end || cp[i] == hash {
 		return skipLine
 	}
+	hasMarker := i > start
 
 	// step 5 — find the key. A colon NOT followed by U+0020 or the line end is an ordinary key
 	// character, so "a:b: v" has the key "a:b"; stating that is what keeps five scanners agreeing.
 	keyStart := i
-	colonAt := -1
-	for j := i; j < line.end; j++ {
-		switch cp[j] {
-		case dquote, squote, lbrace, lbracket, ampers, star, bang, hash:
-			return skipLine
+	first := cp[i]
+	colonAt, keyEnd := -1, -1
+	declined, openQuote := false, false
+	switch {
+	case first == dquote || first == squote:
+		closeAt := yamlClosingQuote(cp, line, i)
+		if closeAt < 0 {
+			openQuote = true
+		} else {
+			p := closeAt + 1
+			for p < line.end && cp[p] == sp {
+				p++
+			}
+			if p < line.end && yamlIndicatorColon(cp, p, line.end) {
+				colonAt, keyEnd, declined = p, closeAt+1, true
+			}
 		}
-		if yamlIndicatorColon(cp, j, line.end) {
-			colonAt = j
-			break
+	case first == lbrace || first == lbracket || first == ampers || first == star || first == bang:
+	default:
+		for j := i; j < line.end; j++ {
+			c := cp[j]
+			if c == hash && cp[j-1] == sp {
+				break
+			}
+			if yamlIndicatorColon(cp, j, line.end) {
+				colonAt = j
+				break
+			}
+			switch c {
+			case dquote, squote, lbrace, lbracket, ampers, star, bang, hash:
+				declined = true
+			}
+		}
+		if colonAt >= 0 {
+			keyEnd = colonAt
+			for keyEnd > keyStart && cp[keyEnd-1] == sp {
+				keyEnd--
+			}
 		}
 	}
+
+	// No key: the line is a node of its own, and it absorbs its value run. One that opens a flow
+	// collection, a block scalar or a quote and sits on a line of its own absorbs the region.
 	if colonAt < 0 {
-		return skipLine
-	}
-	keyEnd := colonAt
-	for keyEnd > keyStart && cp[keyEnd-1] == sp {
-		keyEnd--
-	}
-	if keyEnd <= keyStart {
-		return skipLine
+		ownLine := !hasMarker && (openQuote || first == lbrace || first == lbracket ||
+			first == pipe || first == greater)
+		if ownLine {
+			return yamlOwnLineRunEnd(cp, lines, li, indent)
+		}
+		return yamlValueRunEnd(cp, lines, li, indent)
 	}
 
 	// step 6 — an empty value means a nested node, whose lines ARE scanned on their own.
@@ -228,7 +375,26 @@ func scanYAMLLine(cp []rune, lines []yamlLine, li int, keys map[string]struct{},
 		return skipLine
 	}
 
-	// step 7 — the line carries an inline value, so its continuation lines belong to that value.
+	// step 7 — the line carries an inline value, so its continuation lines belong to that value. A
+	// declined key's value absorbs them only if it can continue on the next line.
+	if declined {
+		open := false
+		switch cp[v] {
+		case pipe, greater, lbrace, lbracket, ampers, bang:
+			open = true
+		case dquote, squote:
+			closeAt := yamlClosingQuote(cp, line, v)
+			p := closeAt + 1
+			for p < line.end && cp[p] == sp {
+				p++
+			}
+			open = closeAt < 0 || (p < line.end && cp[p] != hash)
+		}
+		if open {
+			return yamlValueRunEnd(cp, lines, li, indent)
+		}
+		return skipLine
+	}
 	next := yamlValueRunEnd(cp, lines, li, indent)
 
 	// step 8 — the key must be listed. Checked before the value's form, so an unlisted key costs
@@ -236,15 +402,11 @@ func scanYAMLLine(cp []rune, lines []yamlLine, li int, keys map[string]struct{},
 	if _, ok := keys[string(cp[keyStart:keyEnd])]; !ok {
 		return next
 	}
-
-	// step 9 — a U+000D inside the line is a lone carriage return, which is not a terminator and
-	// cannot be inside a span. The value run is still consumed, as in step 8; this precedes the
-	// form switch below.
-	if yamlHasCR(cp, line) {
+	if quiet {
 		return next
 	}
 
-	// the scalar form, still step 9.
+	// step 9 — the scalar form.
 	switch cp[v] {
 	case hash, ampers, star, bang, lbrace, lbracket:
 		return next
@@ -252,12 +414,12 @@ func scanYAMLLine(cp []rune, lines []yamlLine, li int, keys map[string]struct{},
 		yamlBlockScalar(cp, lines, li, next, indent, v, spans)
 		return next
 	case dquote, squote:
-		if next == li+1 {
+		if !yamlHasContinuation(cp, lines, li, next) {
 			yamlQuotedScalar(cp, line, v, spans)
 		}
 		return next
 	}
-	if next == li+1 {
+	if !yamlHasContinuation(cp, lines, li, next) {
 		yamlPlainScalar(cp, line, v, spans)
 	}
 	return next
