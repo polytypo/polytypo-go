@@ -151,6 +151,12 @@ type FixtureCase struct {
 	// skipped whole, as before 1.7.0; an empty, non-nil slice is legal and yields no spans, so the
 	// JSON null/[] distinction is load-bearing here too.
 	FrontmatterKeys []string `json:"frontmatterKeys,omitempty"`
+	// Protect and ProtectOut are spec 1.13.0's text-mode option (modes.md 3.9): ranges of In, and
+	// the same protected code points as they sit in Out (the idempotency call's ranges, 3.9.5).
+	// They stay raw because the throws fixtures carry values Go's Options cannot represent (a
+	// non-list, a non-integer offset); the runner decodes them and names what it skips.
+	Protect    json.RawMessage `json:"protect,omitempty"`
+	ProtectOut json.RawMessage `json:"protectOut,omitempty"`
 }
 
 // Fixtures is a spec/fixtures/<locale>.json file.
