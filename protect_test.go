@@ -6,7 +6,6 @@
 package polytypo_test
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -370,5 +369,5 @@ func TestProtectSweep(t *testing.T) {
 	if withHoles < checked/2 {
 		t.Fatalf("sweep is not exercising holes: %d of %d", withHoles, checked)
 	}
-	t.Log(fmt.Sprintf("%d documents, %d with holes", checked, withHoles))
+	t.Logf("%d documents, %d with holes", checked, withHoles)
 }
