@@ -37,6 +37,19 @@ func OriginAt(origin []int, index, inputLength int) int {
 	return inputLength
 }
 
+// endOf is where a change ends in the input (analyze.md section 2, since spec 1.13.0): one past the
+// input offset of the last replaced code point that has an origin. Scanning forward from the
+// edit's end index, as OriginAt does for a start, would carry the end across a skipped region or
+// a protected run that follows, since the boundary marker has no origin.
+func endOf(origin []int, edit Edit, inputLength int) int {
+	for i := edit.End - 1; i >= edit.Start; i-- {
+		if origin[i] != NoOrigin {
+			return origin[i] + 1
+		}
+	}
+	return OriginAt(origin, edit.End, inputLength)
+}
+
 // ApplyEditsToOrigin returns the origin map for the array ApplyEdits is about to produce. A
 // replacement of equal length keeps its origins position by position, which is what makes a
 // conversion (U+0020 -> U+00A0) still point at the character it converted; anything longer is
@@ -76,7 +89,7 @@ func RecordChanges(cp []rune, edits []Edit, origin []int, inputLength int, ruleI
 		changes = append(changes, Change{
 			RuleID: ruleID,
 			Start:  OriginAt(origin, edit.Start, inputLength),
-			End:    OriginAt(origin, edit.End, inputLength),
+			End:    endOf(origin, edit, inputLength),
 			Before: string(cp[edit.Start:edit.End]),
 			After:  string(edit.Replacement),
 		})

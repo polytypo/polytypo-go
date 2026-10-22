@@ -51,6 +51,12 @@ const (
 // text on both sides of that one edit (spec/rules/analyze.md section 2).
 type Change = engine.Change
 
+// Range is one element of Options.Protect: the code points at Start ... End-1 of the input,
+// half-open, counted in Unicode code points (runes) of the input as passed — never bytes and never
+// UTF-16 units (modes.md 3.9.2). The offsets a Go template parser or strings.Index reports are
+// byte offsets; convert them with utf8.RuneCountInString(input[:offset]).
+type Range = engine.Range
+
 // Options configures Transform. Matches docs/ARCHITECTURE.md section 7 exactly across every
 // runtime, with idiomatic Go naming.
 type Options struct {
@@ -86,6 +92,14 @@ type Options struct {
 	// faces do not carry (nbsp.md 3.1a). It moves the rule's target rather than post-processing
 	// the output, so the result stays a fixed point. Any other value returns CodeInvalidOption.
 	NarrowNbsp string
+	// Protect is optional and "text" mode only (modes.md 3.9, spec 1.13.0): ranges of the input
+	// that are never edited and that the rules read as opaque content — a template hole, an
+	// ICU argument. Ascending and non-overlapping; touching ranges are one run. A nil and an
+	// empty slice are the same call. A violation returns CodeInvalidOption, and so does a
+	// non-empty slice in any other mode. Edits before a range move it, so a second Transform
+	// over the output needs the ranges as they sit in the output; Transform does not return
+	// them (modes.md 3.9.5). Input that is not valid UTF-8 is outside this contract.
+	Protect []Range
 }
 
 func resolveMode(mode string) (string, error) {
@@ -165,6 +179,9 @@ func runYAML(input string, opts Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := engine.AssertNoProtect(opts.Protect, "yaml"); err != nil {
+		return "", err
+	}
 	cp := engine.ToCodePoints(input)
 	ctx := engine.RuleContext{Mode: "yaml", Locale: resolvedLocale, NarrowTarget: narrowTarget}
 	return modes.RunOverSpans(cp, modes.YAMLSpans(cp, keys), plan, localeData, ctx)
@@ -180,7 +197,14 @@ func runText(input string, opts Options) (string, error) {
 		return "", err
 	}
 	cp := engine.ToCodePoints(input)
+	holes, err := engine.ResolveProtect(opts.Protect, len(cp))
+	if err != nil {
+		return "", err
+	}
 	ctx := engine.RuleContext{Mode: "text", Locale: opts.Locale, NarrowTarget: narrowTarget}
+	if len(holes) > 0 {
+		return modes.RunProtected(cp, holes, plan, localeData, ctx)
+	}
 	result, err := engine.RunRules(cp, plan, localeData, ctx)
 	if err != nil {
 		return "", err
@@ -197,6 +221,9 @@ func runHTML(input string, opts Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := engine.AssertNoProtect(opts.Protect, "html"); err != nil {
+		return "", err
+	}
 	spans, err := modes.HTMLSpans(input)
 	if err != nil {
 		return "", err
@@ -208,7 +235,7 @@ func runHTML(input string, opts Options) (string, error) {
 func runMarkdown(input string, opts Options) (string, error) {
 	// Validation order is public, tested behaviour and is stated in ARCHITECTURE.md 7:
 	// mode, then narrowNbsp, then rules (an unknown rule id), then locale (an unknown locale),
-	// then dialect/parsing.
+	// then dialect, then protect, then parsing.
 	narrowTarget, err := engine.ResolveNarrowTarget(opts.NarrowNbsp)
 	if err != nil {
 		return "", err
@@ -218,6 +245,9 @@ func runMarkdown(input string, opts Options) (string, error) {
 		return "", err
 	}
 	if err := modes.ResolveMarkdownDialect(opts.Dialect); err != nil {
+		return "", err
+	}
+	if err := engine.AssertNoProtect(opts.Protect, "markdown"); err != nil {
 		return "", err
 	}
 	units, err := markdownUnits(input, opts)
@@ -309,11 +339,18 @@ func analyzeText(input string, opts Options) ([]Change, error) {
 		return nil, err
 	}
 	cp := engine.ToCodePoints(input)
+	holes, err := engine.ResolveProtect(opts.Protect, len(cp))
+	if err != nil {
+		return nil, err
+	}
+	ctx := engine.RuleContext{Mode: "text", Locale: opts.Locale, NarrowTarget: narrowTarget}
+	if len(holes) > 0 {
+		return modes.AnalyzeProtected(cp, holes, plan, localeData, ctx)
+	}
 	origin := make([]int, len(cp))
 	for i := range cp {
 		origin[i] = i
 	}
-	ctx := engine.RuleContext{Mode: "text", Locale: opts.Locale, NarrowTarget: narrowTarget}
 	return engine.RunRulesRecording(cp, plan, localeData, ctx, origin, len(cp), nil)
 }
 
@@ -324,6 +361,9 @@ func analyzeHTML(input string, opts Options) ([]Change, error) {
 	}
 	resolvedLocale, localeData, plan, err := engine.Prepare(opts.Locale, opts.Rules)
 	if err != nil {
+		return nil, err
+	}
+	if err := engine.AssertNoProtect(opts.Protect, "html"); err != nil {
 		return nil, err
 	}
 	spans, err := modes.HTMLSpans(input)
@@ -349,6 +389,9 @@ func analyzeYAML(input string, opts Options) ([]Change, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := engine.AssertNoProtect(opts.Protect, "yaml"); err != nil {
+		return nil, err
+	}
 	cp := engine.ToCodePoints(input)
 	ctx := engine.RuleContext{Mode: "yaml", Locale: resolvedLocale, NarrowTarget: narrowTarget}
 	return modes.AnalyzeOverSpans(cp, modes.YAMLSpans(cp, keys), plan, localeData, ctx)
@@ -367,6 +410,9 @@ func analyzeMarkdown(input string, opts Options) ([]Change, error) {
 		return nil, err
 	}
 	if err := modes.ResolveMarkdownDialect(opts.Dialect); err != nil {
+		return nil, err
+	}
+	if err := engine.AssertNoProtect(opts.Protect, "markdown"); err != nil {
 		return nil, err
 	}
 	units, err := markdownUnits(input, opts)

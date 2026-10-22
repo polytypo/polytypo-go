@@ -5,6 +5,8 @@
 package polytypo_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -35,6 +37,36 @@ func codeOf(err error) (string, bool) {
 	return string(perr.Code), true
 }
 
+// decodeRanges converts a fixture's protect / protectOut into Options.Protect. Go's static type
+// cannot hold a value that is not a list of integer pairs, so the two fixtures that pin exactly
+// that (en-us-protect-throws-not-a-list, en-us-protect-throws-non-integer) report ok == false and
+// the runner skips them with the returned reason; protect_test.go covers what is expressible
+// (every other refusal) and Go's compiler covers the rest.
+func decodeRanges(raw json.RawMessage) (ranges []polytypo.Range, ok bool, reason string) {
+	if len(raw) == 0 {
+		return nil, true, ""
+	}
+	var list []struct {
+		Start json.Number `json:"start"`
+		End   json.Number `json:"end"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&list); err != nil {
+		return nil, false, "protect is not a list: Options.Protect is []Range, so the value cannot be written"
+	}
+	ranges = make([]polytypo.Range, 0, len(list))
+	for _, r := range list {
+		start, errS := r.Start.Int64()
+		end, errE := r.End.Int64()
+		if errS != nil || errE != nil {
+			return nil, false, "protect has a non-integer offset: Range.Start and Range.End are int, so the value cannot be written"
+		}
+		ranges = append(ranges, polytypo.Range{Start: int(start), End: int(end)})
+	}
+	return ranges, true, ""
+}
+
 func TestFixtures(t *testing.T) {
 	locales, err := spec.FixtureLocales()
 	if err != nil {
@@ -59,6 +91,15 @@ func TestFixtures(t *testing.T) {
 						`an accepted, narrower conformance claim; see spec/CONFORMANCE.md`)
 				}
 
+				protect, representable, reason := decodeRanges(c.Protect)
+				if !representable {
+					t.Skip(reason)
+				}
+				protectOut, representable, reason := decodeRanges(c.ProtectOut)
+				if !representable {
+					t.Skip(reason)
+				}
+
 				// The SAME opts value is used below for the idempotency re-run. That is contract
 				// as of spec 1.3.0 (ARCHITECTURE.md 6.1), not convenience: a case carrying
 				// NarrowNbsp or Keys is a fixed point under those options and not under the
@@ -75,6 +116,7 @@ func TestFixtures(t *testing.T) {
 					// carrying it is a fixed point under it, and re-running without it would
 					// compare the block against a run that never saw the option.
 					FrontmatterKeys: c.FrontmatterKeys,
+					Protect:         protect,
 				}
 
 				if c.Throws != "" {
@@ -106,7 +148,12 @@ func TestFixtures(t *testing.T) {
 				}
 
 				// Free coverage, and the most common port bug (ARCHITECTURE.md 6.1).
-				twice, err := polytypo.Transform(expected, opts)
+				// The one exception to "the same options": a protected range moves with the edits
+				// before it, so the second call carries protectOut, the same code points located
+				// in the output (modes.md 3.9.5).
+				twiceOpts := opts
+				twiceOpts.Protect = protectOut
+				twice, err := polytypo.Transform(expected, twiceOpts)
 				if err != nil {
 					t.Fatalf("idempotency transform errored: %v", err)
 				}

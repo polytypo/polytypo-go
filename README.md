@@ -123,6 +123,31 @@ containing `''` among them, which is how an apostrophe is written inside single 
 which shows up in exactly one place: an unbalanced quotation mark in `title` cannot pair with a
 mark in your first paragraph.
 
+In `text` mode, `Protect` marks ranges of the input that are never edited and that the rules read
+as opaque content — a template hole, an ICU argument, anything the library cannot know is not
+prose. The offsets are code points of the input, half-open, ascending and non-overlapping
+(touching ranges are one run):
+
+```go
+out, err := polytypo.Transform("${x} - Rules", polytypo.Options{
+    Locale:  "en-US",
+    Protect: []polytypo.Range{{Start: 0, End: 4}},
+})
+// ${x}—Rules
+```
+
+Splitting the string at the hole and transforming each piece would leave the dash alone, since
+neither piece has the context the rules need; `Protect` keeps it. The offsets are not the byte
+offsets that `strings.Index` or a template parser reports: convert them with
+`utf8.RuneCountInString(input[:offset])`. A nil and an empty `Protect` are the same call. Any
+range outside the input, empty, negative, unsorted or overlapping returns `CodeInvalidOption`, and
+so does a non-empty `Protect` in `html`, `markdown` or `yaml` mode. Edits before a range move it,
+so a second `Transform` over the output needs the ranges as they sit in the output; `Transform`
+does not return them, and the text of a protected range comes back byte for byte. A text with
+`Protect` can convert less than the same characters without it, never more: an edit that would
+add characters beside a protected range is declined. `Analyze` accepts `Protect` with the same
+validation. Full contract: `spec/rules/modes.md` section 3.9.
+
 Unlike the JS and Python ports, there is no `polytypo/text`, `polytypo/html` or
 `polytypo/markdown` subpath split: Go's linker already dead-code-eliminates unreached functions
 and `go.sum` entries are cheap, so the bundle-size/import-time motivation that justifies a
