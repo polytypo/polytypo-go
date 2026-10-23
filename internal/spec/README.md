@@ -23,8 +23,7 @@ on any difference. Five details. The files this repository authors itself are li
 `.not-canonical` and skipped — and a listed path that canonical *does* have is an error, so that
 list cannot be used to keep a forked copy of a canonical file. A `locales/*.json` file is compared
 in full when it carries its `sources` array, and against canonical minus that array when it does
-not, which is the shipped form three of the five runtimes vendor; the script reads which case it
-is off the file rather than being told. A file here with no canonical counterpart is a failure, so
+not; the script reads which case it is off the file rather than being told. A file here with no canonical counterpart is a failure, so
 a canonical rename cannot pass unnoticed. Completeness is checked from canonical's side rather
 than this one: every file canonical has at that tag must be here unless `.not-vendored` names it,
 so a vendored file that was deleted, or a canonical file that arrived later and was never copied,
@@ -41,17 +40,15 @@ long-term (submodule, per-ecosystem spec package, or something else) is an open 
 in `polytypo/polytypo`'s `docs/ROADMAP.md`; this is the interim, manually-synced form — the same
 status `polytypo-js`'s and `polytypo-python`'s own vendored copies have.
 
-## `locales/*.json` here carry no `sources`
+## `locales/*.json` here carry `sources`
 
-The canonical files do, and mandatorily — `spec/schema/locale.schema.json` makes `sources`
-required with `minItems: 1`, and `validate-spec.mjs` fails a locale without a citation. This copy
-drops that one field, because these exact files are what ships: no rule reads the citations, and
-they are 94% of the locale payload by raw bytes (193 KB of 206 KB, against 13 KB of everything the
-engine actually consults). Keeping them here would put a quarter-megabyte of citation prose in
-every install of this package.
+These are whole copies of the canonical files, including the mandatory `sources` array
+(`spec/schema/locale.schema.json` requires it with `minItems: 1`), and `scripts/check-vendored-spec.sh`
+compares them in full. The array is embedded into the binary with the rest of the file; no rule
+reads it. The citations are evidence and they are read where they are rendered, on the project's
+Locales page, from the canonical `spec/locales/`. Re-syncing this directory means copying the
+canonical files as they are.
 
-So this is one field narrower than the canonical file, deliberately, and it is not drift: the
-directory was always "the subset it needs" (see the paragraph above). **The citations are
-evidence and they are not weakened — read them in `polytypo/polytypo`'s own `spec/locales/`, or
-on the project's Locales page, which renders them from those files.** Re-syncing this directory
-means copying the canonical files and dropping `sources` again.
+The check script can also compare a file against canonical minus `sources`, and reads which case
+applies off the file. That form exists for a runtime that trims the array before embedding; none of
+the five vendors a trimmed copy.
