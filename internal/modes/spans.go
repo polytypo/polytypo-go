@@ -20,6 +20,9 @@ var lineTerminators = map[rune]bool{
 type Span struct {
 	Start int
 	End   int
+	// URLTail marks a span that begins at the terminator of a bare web address (modes.md 3.7.3,
+	// spec 1.17.2): an edit starting at its first code point must keep a U+0020 there.
+	URLTail bool
 }
 
 // SpanRange is a span's extent in the concatenated code-point array: s0/s1 of modes.md 3.4.
@@ -113,13 +116,65 @@ func SpanRangesOf(cp []rune) []SpanRange {
 	return ranges
 }
 
-func spanContaining(ranges []SpanRange, p int) (SpanRange, bool) {
-	for _, r := range ranges {
+func spanContaining(ranges []SpanRange, p int) (SpanRange, int, bool) {
+	for i, r := range ranges {
 		if r.First <= p && p <= r.Last+1 {
-			return r, true
+			return r, i, true
 		}
 	}
-	return SpanRange{}, false
+	return SpanRange{}, -1, false
+}
+
+// isDelimiter is DELIM of modes.md 3.4: U+002A, U+005F, U+007E.
+func isDelimiter(c rune) bool {
+	return c == '*' || c == '_' || c == '~'
+}
+
+// isMarkdownWhitespace is W of modes.md 3.4. A position outside the array, and a marker, are in
+// neither class.
+func isMarkdownWhitespace(cp []rune, i int) bool {
+	return i >= 0 && i < len(cp) && isWhitespaceRune(cp[i])
+}
+
+func isWhitespaceRune(c rune) bool {
+	switch {
+	case c == 0x09, c == 0x0A, c == 0x0C, c == 0x0D, c == 0x20, c == 0xA0, c == 0x1680,
+		c >= 0x2000 && c <= 0x200A, c == 0x202F, c == 0x205F, c == 0x3000:
+		return true
+	}
+	return false
+}
+
+// changesDelimiterFlank is modes.md 3.4's delimiter-neighbour rule (markdown only, spec 1.17.2):
+// the edit replacing cp[p..q] with w is discarded when, beside a DELIM code point, exactly one of
+// the old and the new neighbour is whitespace.
+func changesDelimiterFlank(cp []rune, p, q int, w []rune) bool {
+	r := len(w)
+	if p-1 >= 0 && isDelimiter(cp[p-1]) {
+		before := isMarkdownWhitespace(cp, p)
+		var after bool
+		if r > 0 {
+			after = isWhitespaceRune(w[0])
+		} else {
+			after = isMarkdownWhitespace(cp, q+1)
+		}
+		if before != after {
+			return true
+		}
+	}
+	if q+1 < len(cp) && isDelimiter(cp[q+1]) {
+		before := isMarkdownWhitespace(cp, q)
+		var after bool
+		if r > 0 {
+			after = isWhitespaceRune(w[r-1])
+		} else {
+			after = isMarkdownWhitespace(cp, p-1)
+		}
+		if before != after {
+			return true
+		}
+	}
+	return false
 }
 
 // space is U+0020, the one emitted code point whose meaning is positional (modes.md 3.4,
@@ -140,7 +195,10 @@ const space = ' '
 //
 // Deletion at an edge is NOT restricted here — r > d is always false for a deletion, so this
 // filter never sees one; that case is spaces.md 3.2 step 4's own edge-as-NONE clause instead.
-func FilterBoundaryEdits(cp []rune, edits []engine.Edit, ranges []SpanRange) []engine.Edit {
+//
+// markdown enables the delimiter-neighbour rule (modes.md 3.4, spec 1.17.2) and guarded, indexed
+// like ranges, the terminator guard of modes.md 3.7.3.
+func FilterBoundaryEdits(cp []rune, edits []engine.Edit, ranges []SpanRange, markdown bool, guarded []bool) []engine.Edit {
 	out := make([]engine.Edit, 0, len(edits))
 	for _, edit := range edits {
 		containsMarker := false
@@ -158,7 +216,16 @@ func FilterBoundaryEdits(cp []rune, edits []engine.Edit, ranges []SpanRange) []e
 		q := edit.End - 1
 		d := edit.End - edit.Start
 		r := len(edit.Replacement)
-		if span, ok := spanContaining(ranges, p); ok && (p == span.First || q == span.Last) {
+		if markdown && changesDelimiterFlank(cp, p, q, edit.Replacement) {
+			continue
+		}
+		span, index, ok := spanContaining(ranges, p)
+		if ok && p == span.First && index < len(guarded) && guarded[index] {
+			if r == 0 || edit.Replacement[0] != space {
+				continue
+			}
+		}
+		if ok && (p == span.First || q == span.Last) {
 			if r > d {
 				continue
 			}

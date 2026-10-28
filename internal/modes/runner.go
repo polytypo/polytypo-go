@@ -11,12 +11,12 @@ import (
 // modes.md 3.4 interposed. Span extents are recomputed after every rule, because applying an
 // edit shifts every index after it; the markers themselves always survive, since no edit may
 // contain one.
-func runRulesOverSpans(cp []rune, plan []string, localeData spec.LocaleData, ctx engine.RuleContext) ([]rune, error) {
+func runRulesOverSpans(cp []rune, plan []string, localeData spec.LocaleData, ctx engine.RuleContext, guarded []bool) ([]rune, error) {
 	current := cp
 	for _, ruleID := range plan {
 		fn := engine.GetRule(ruleID)
 		edits := fn(current, localeData, ctx)
-		filtered := FilterBoundaryEdits(current, edits, SpanRangesOf(current))
+		filtered := FilterBoundaryEdits(current, edits, SpanRangesOf(current), ctx.Mode == "markdown", guarded)
 		if len(filtered) == 0 {
 			continue
 		}
@@ -49,7 +49,7 @@ func RunOverSpans(sourceCP []rune, spans []Span, plan []string, localeData spec.
 	}
 
 	concatenated := ConcatenateSpans(sourceCP, normalized)
-	transformed, err := runRulesOverSpans(concatenated, plan, localeData, ctx)
+	transformed, err := runRulesOverSpans(concatenated, plan, localeData, ctx, urlTails(normalized))
 	if err != nil {
 		return "", err
 	}
@@ -106,7 +106,7 @@ func RunOverUnits(sourceCP []rune, units [][]Span, plan []string, localeData spe
 		if len(normalized) == 0 {
 			continue
 		}
-		transformed, err := runRulesOverSpans(ConcatenateSpans(sourceCP, normalized), plan, localeData, ctx)
+		transformed, err := runRulesOverSpans(ConcatenateSpans(sourceCP, normalized), plan, localeData, ctx, urlTails(normalized))
 		if err != nil {
 			return "", err
 		}
@@ -158,7 +158,16 @@ func AnalyzeOverSpans(sourceCP []rune, spans []Span, plan []string, localeData s
 		OriginOfSpans(normalized),
 		len(sourceCP),
 		func(current []rune, edits []engine.Edit) []engine.Edit {
-			return FilterBoundaryEdits(current, edits, SpanRangesOf(current))
+			return FilterBoundaryEdits(current, edits, SpanRangesOf(current), ctx.Mode == "markdown", urlTails(normalized))
 		},
 	)
+}
+
+// urlTails lists, per span, whether it begins at the terminator of a bare web address.
+func urlTails(spans []Span) []bool {
+	out := make([]bool, len(spans))
+	for i, span := range spans {
+		out[i] = span.URLTail
+	}
+	return out
 }

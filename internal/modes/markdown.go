@@ -1,6 +1,7 @@
 package modes
 
 import (
+	"bytes"
 	"strings"
 
 	"github.com/yuin/goldmark"
@@ -12,7 +13,7 @@ import (
 	"github.com/polytypo/polytypo-go/internal/engine"
 )
 
-var markdownParser = goldmark.New(goldmark.WithExtensions(extension.GFM)).Parser()
+var markdownParser = goldmark.New(goldmark.WithExtensions(extension.GFM, extension.Footnote)).Parser()
 
 // ResolveMarkdownDialect implements spec/rules/modes.md 3.7.1: dialect is required, has no
 // default, and is never detected. This runtime supports only "commonmark" (CommonMark 0.31 plus
@@ -219,6 +220,7 @@ type mdWalker struct {
 	offsets   *ByteOffsets
 	spans     []Span
 	htmlStack []string
+	urlEnds   map[int]bool
 	err       error
 }
 
@@ -280,6 +282,36 @@ func (w *mdWalker) handleHTMLBlock(n *ast.HTMLBlock) {
 	}
 }
 
+func referenceOf(n ast.Node) *ast.ReferenceLink {
+	switch l := n.(type) {
+	case *ast.Link:
+		return l.Reference
+	case *ast.Image:
+		return l.Reference
+	}
+	return nil
+}
+
+// recordLiteralAutolinkEnd notes where a parser-recognised GFM autolink literal ends, for the
+// tail scan of trimURLTails. The angle-bracket form is skipped whole already and has no tail.
+func (w *mdWalker) recordLiteralAutolinkEnd(n *ast.AutoLink) {
+	if n.AutoLinkType != ast.AutoLinkURL {
+		return
+	}
+	// goldmark exposes an autolink's label as a slice of the parser's input and not its offsets;
+	// the start is recovered from the slice's position in that input and verified against it.
+	label := n.Label(w.src)
+	start := cap(w.src) - cap(label)
+	stop := start + len(label)
+	if start < 0 || stop > len(w.src) || len(label) == 0 || !bytes.Equal(w.src[start:stop], label) {
+		return
+	}
+	if start > 0 && w.src[start-1] == '<' && stop < len(w.src) && w.src[stop] == '>' {
+		return
+	}
+	w.urlEnds[w.offsets.CodePointOf(stop)] = true
+}
+
 // walk recurses over the goldmark AST. Only ast.Text nodes carry a byte Segment for prose content
 // — every structural byte (emphasis delimiters, link brackets and destination, table pipes and
 // the delimiter row, list markers, blockquote markers, heading hashes, fence lines and info
@@ -292,7 +324,16 @@ func (w *mdWalker) walk(n ast.Node) {
 		return
 	}
 	switch n.Kind() {
-	case ast.KindCodeSpan, ast.KindAutoLink, ast.KindCodeBlock, ast.KindFencedCodeBlock, ast.KindThematicBreak:
+	case ast.KindAutoLink:
+		w.recordLiteralAutolinkEnd(n.(*ast.AutoLink))
+		return
+	case ast.KindLink, ast.KindImage:
+		// modes.md 3.7.3 (spec 1.17.2): the text of a shortcut or collapsed reference is the label
+		// matched against its definition, so it is skipped with the definition.
+		if ref := referenceOf(n); ref != nil && ref.Type != ast.ReferenceLinkFull {
+			return
+		}
+	case ast.KindCodeSpan, ast.KindCodeBlock, ast.KindFencedCodeBlock, ast.KindThematicBreak:
 		return
 	case ast.KindRawHTML:
 		w.handleRawHTML(n.(*ast.RawHTML))
@@ -382,6 +423,7 @@ func MarkdownSpans(source string) ([]Span, error) {
 	w := &mdWalker{
 		src:     parsed,
 		offsets: offsets,
+		urlEnds: map[int]bool{},
 	}
 
 	var perr error
@@ -396,7 +438,74 @@ func MarkdownSpans(source string) ([]Span, error) {
 	if w.err != nil {
 		return nil, w.err
 	}
-	return w.spans, nil
+	// Pieces a parser reports separately (an unpaired '_' is one) are merged before the address
+	// scan and before the delimiter-neighbour rule reads its neighbours (modes.md 3.7.3).
+	merged, err := NormalizeSpans(w.spans)
+	if err != nil {
+		return nil, err
+	}
+	return trimURLTails(cp, merged, w.urlEnds), nil
+}
+
+// startsURL reports whether cp[i:end] begins with http://, https:// or www., ASCII letters in
+// either case.
+func startsURL(cp []rune, i, end int) bool {
+	at := func(word string) bool {
+		if i+len(word) > end {
+			return false
+		}
+		for k := 0; k < len(word); k++ {
+			c := cp[i+k]
+			if c >= 'A' && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			if c != rune(word[k]) {
+				return false
+			}
+		}
+		return true
+	}
+	return at("www.") || at("http://") || at("https://")
+}
+
+// trimURLTails is modes.md 3.7.3 (spec 1.17.2): from every http://, https:// or www. in a merged
+// span, and from the end of a parser-recognised autolink literal, up to the first U+0020, U+0009,
+// U+000A, U+000D or '<' (or the span's end) is skipped. A span that begins at the U+0020 or U+0009
+// ending such an address is marked URLTail. It scans the source because parsers disagree about
+// where an address may start and where it ends.
+func trimURLTails(cp []rune, spans []Span, urlEnds map[int]bool) []Span {
+	out := make([]Span, 0, len(spans))
+	for _, span := range spans {
+		from, i := span.Start, span.Start
+		guard := span.URLTail || (urlEnds[span.Start] && (cp[span.Start] == ' ' || cp[span.Start] == '\t'))
+		for i < span.End {
+			if !(i == span.Start && urlEnds[i]) && !startsURL(cp, i, span.End) {
+				i++
+				continue
+			}
+			e := i
+			for e < span.End {
+				c := cp[e]
+				if c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '<' {
+					break
+				}
+				e++
+			}
+			if e == i {
+				i++
+				continue
+			}
+			if i > from {
+				out = append(out, Span{Start: from, End: i, URLTail: guard})
+			}
+			guard = e < span.End && (cp[e] == ' ' || cp[e] == '\t')
+			from, i = e, e
+		}
+		if from < span.End {
+			out = append(out, Span{Start: from, End: span.End, URLTail: guard})
+		}
+	}
+	return out
 }
 
 // declinedContentPositions marks every code point of a frontmatter block's content that lies on a

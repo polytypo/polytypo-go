@@ -38,7 +38,7 @@ func protectedLayout(cp []rune, holes []engine.Range) (array []rune, origin []in
 // protect' of modes.md 3.9.5; Transform does not expose it, tests use it.
 func RunProtectedMapped(cp []rune, holes []engine.Range, plan []string, localeData spec.LocaleData, ctx engine.RuleContext) ([]rune, []engine.Range, error) {
 	array, _ := protectedLayout(cp, holes)
-	transformed, err := runRulesOverSpans(array, plan, localeData, ctx)
+	transformed, err := runRulesOverSpans(array, plan, localeData, ctx, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -78,6 +78,6 @@ func AnalyzeProtected(cp []rune, holes []engine.Range, plan []string, localeData
 	array, origin := protectedLayout(cp, holes)
 	return engine.RunRulesRecording(array, plan, localeData, ctx, origin, len(cp),
 		func(current []rune, edits []engine.Edit) []engine.Edit {
-			return FilterBoundaryEdits(current, edits, SpanRangesOf(current))
+			return FilterBoundaryEdits(current, edits, SpanRangesOf(current), false, nil)
 		})
 }
