@@ -9,6 +9,7 @@ import (
 	"github.com/yuin/goldmark/extension"
 	extAst "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 
 	"github.com/polytypo/polytypo-go/internal/engine"
 )
@@ -234,6 +235,78 @@ func (w *mdWalker) emit(startByte, endByte int) {
 	})
 }
 
+// emitAroundOpaqueUnits emits [startByte, endByte) split around every backslash escape and every
+// character reference the parser recognises, which lie outside every span (modes.md 3.7.3, spec
+// 1.17.4). goldmark leaves both unresolved in a Text segment, so they are found by a scan here.
+func (w *mdWalker) emitAroundOpaqueUnits(startByte, endByte int) {
+	raw := w.src[startByte:endByte]
+	cursor := 0
+	for i := 0; i < len(raw); {
+		unitEnd := 0
+		switch raw[i] {
+		case '\\':
+			if i+1 < len(raw) && isASCIIPunctuation(rune(raw[i+1])) {
+				unitEnd = i + 2
+			}
+		case '&':
+			unitEnd = recognisedReferenceEnd(raw, i)
+		}
+		if unitEnd == 0 {
+			i++
+			continue
+		}
+		w.emit(startByte+cursor, startByte+i)
+		cursor = unitEnd
+		i = unitEnd
+	}
+	w.emit(startByte+cursor, endByte)
+}
+
+// goldmarkMissingEntities are the HTML5 names absent from goldmark v1.8.6's table (2124 of the
+// 2125 names of html.spec.whatwg.org/entities.json); recognition must equal the full list.
+var goldmarkMissingEntities = map[string]bool{"Abreve": true}
+
+// recognisedReferenceEnd returns the end of the CommonMark character reference starting at raw[i]
+// (&name; with a registered HTML5 name, &#d{1,7}; or &#xh{1,6};), or 0.
+func recognisedReferenceEnd(raw []byte, i int) int {
+	n := len(raw)
+	j := i + 1
+	if j >= n {
+		return 0
+	}
+	if raw[j] == '#' {
+		j++
+		isHex := j < n && (raw[j] == 'x' || raw[j] == 'X')
+		if isHex {
+			j++
+		}
+		digits := j
+		for j < n && (isASCIIDigit(raw[j]) || (isHex && isHexDigit(raw[j]))) {
+			j++
+		}
+		max := 7
+		if isHex {
+			max = 6
+		}
+		if j == digits || j-digits > max || j >= n || raw[j] != ';' {
+			return 0
+		}
+		return j + 1
+	}
+	k := j
+	for k < n && isASCIIAlphaNumeric(raw[k]) {
+		k++
+	}
+	if k == j || k >= n || raw[k] != ';' {
+		return 0
+	}
+	name := string(raw[j:k])
+	if _, ok := util.LookUpHTML5EntityByName(name); !ok && !goldmarkMissingEntities[name] {
+		return 0
+	}
+	return k + 1
+}
+
 // handleRawHTML implements modes.md 3.7.3's stack-of-open-skipped-elements model for inline raw
 // HTML: "isolated tags with Markdown between them, not a tree", so the html skip list's subtree
 // rule is a push-on-open, pop-on-matching-close stack rather than a tree walk. No span is ever
@@ -343,7 +416,7 @@ func (w *mdWalker) walk(n ast.Node) {
 		return
 	case ast.KindText:
 		t := n.(*ast.Text)
-		w.emit(t.Segment.Start, t.Segment.Stop)
+		w.emitAroundOpaqueUnits(t.Segment.Start, t.Segment.Stop)
 		return
 	case ast.KindParagraph, ast.KindHeading, ast.KindTextBlock, extAst.KindTableCell:
 		// A fresh top-level inline-bearing container: the raw-HTML skip stack resets here (an

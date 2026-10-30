@@ -177,6 +177,59 @@ func changesDelimiterFlank(cp []rune, p, q int, w []rune) bool {
 	return false
 }
 
+func isASCIIPunctuation(c rune) bool {
+	return (c >= 0x21 && c <= 0x2f) || (c >= 0x3a && c <= 0x40) || (c >= 0x5b && c <= 0x60) || (c >= 0x7b && c <= 0x7e)
+}
+
+func isASCIIAlphanumeric(c rune) bool {
+	return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+}
+
+// createsEscape is modes.md 3.4's escape-and-reference rule, item 1 (markdown only, spec 1.17.4).
+func createsEscape(cp []rune, p, q int, w []rune) bool {
+	if p-1 < 0 || cp[p-1] != '\\' {
+		return false
+	}
+	before := isASCIIPunctuation(cp[p])
+	var after bool
+	if len(w) > 0 {
+		after = isASCIIPunctuation(w[0])
+	} else if q+1 < len(cp) {
+		after = isASCIIPunctuation(cp[q+1])
+	}
+	return before != after
+}
+
+// createsReference is modes.md 3.4's escape-and-reference rule, item 2 (markdown and html, spec
+// 1.17.4): a deletion that makes '&', an optional '#', one or more ASCII letters or digits and
+// ';' adjacent around the join. A marker is in no class and stops either scan.
+func createsReference(cp []rune, p, q int, w []rune) bool {
+	if len(w) != 0 || p-1 < 0 || q+1 >= len(cp) {
+		return false
+	}
+	left := p - 1
+	alnum := 0
+	for left >= 0 && isASCIIAlphanumeric(cp[left]) {
+		left--
+		alnum++
+	}
+	right := q + 1
+	if left >= 0 && cp[left] == '&' && right < len(cp) && cp[right] == '#' && alnum == 0 {
+		right++
+	}
+	for right < len(cp) && isASCIIAlphanumeric(cp[right]) {
+		right++
+		alnum++
+	}
+	if right >= len(cp) || cp[right] != ';' || alnum == 0 {
+		return false
+	}
+	if left >= 0 && cp[left] == '#' {
+		left--
+	}
+	return left >= 0 && cp[left] == '&'
+}
+
 // space is U+0020, the one emitted code point whose meaning is positional (modes.md 3.4,
 // 5 item 2).
 const space = ' '
@@ -196,9 +249,9 @@ const space = ' '
 // Deletion at an edge is NOT restricted here — r > d is always false for a deletion, so this
 // filter never sees one; that case is spaces.md 3.2 step 4's own edge-as-NONE clause instead.
 //
-// markdown enables the delimiter-neighbour rule (modes.md 3.4, spec 1.17.2) and guarded, indexed
+// mode selects the delimiter-neighbour (spec 1.17.2) and escape-and-reference (1.17.4) rules of modes.md 3.4, and guarded, indexed
 // like ranges, the terminator guard of modes.md 3.7.3.
-func FilterBoundaryEdits(cp []rune, edits []engine.Edit, ranges []SpanRange, markdown bool, guarded []bool) []engine.Edit {
+func FilterBoundaryEdits(cp []rune, edits []engine.Edit, ranges []SpanRange, mode string, guarded []bool) []engine.Edit {
 	out := make([]engine.Edit, 0, len(edits))
 	for _, edit := range edits {
 		containsMarker := false
@@ -216,7 +269,11 @@ func FilterBoundaryEdits(cp []rune, edits []engine.Edit, ranges []SpanRange, mar
 		q := edit.End - 1
 		d := edit.End - edit.Start
 		r := len(edit.Replacement)
-		if markdown && changesDelimiterFlank(cp, p, q, edit.Replacement) {
+		if mode == "markdown" && (changesDelimiterFlank(cp, p, q, edit.Replacement) ||
+			createsEscape(cp, p, q, edit.Replacement)) {
+			continue
+		}
+		if (mode == "markdown" || mode == "html") && createsReference(cp, p, q, edit.Replacement) {
 			continue
 		}
 		span, index, ok := spanContaining(ranges, p)

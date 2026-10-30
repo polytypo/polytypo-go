@@ -78,6 +78,6 @@ func AnalyzeProtected(cp []rune, holes []engine.Range, plan []string, localeData
 	array, origin := protectedLayout(cp, holes)
 	return engine.RunRulesRecording(array, plan, localeData, ctx, origin, len(cp),
 		func(current []rune, edits []engine.Edit) []engine.Edit {
-			return FilterBoundaryEdits(current, edits, SpanRangesOf(current), false, nil)
+			return FilterBoundaryEdits(current, edits, SpanRangesOf(current), "text", nil)
 		})
 }

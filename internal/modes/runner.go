@@ -16,7 +16,7 @@ func runRulesOverSpans(cp []rune, plan []string, localeData spec.LocaleData, ctx
 	for _, ruleID := range plan {
 		fn := engine.GetRule(ruleID)
 		edits := fn(current, localeData, ctx)
-		filtered := FilterBoundaryEdits(current, edits, SpanRangesOf(current), ctx.Mode == "markdown", guarded)
+		filtered := FilterBoundaryEdits(current, edits, SpanRangesOf(current), ctx.Mode, guarded)
 		if len(filtered) == 0 {
 			continue
 		}
@@ -158,7 +158,7 @@ func AnalyzeOverSpans(sourceCP []rune, spans []Span, plan []string, localeData s
 		OriginOfSpans(normalized),
 		len(sourceCP),
 		func(current []rune, edits []engine.Edit) []engine.Edit {
-			return FilterBoundaryEdits(current, edits, SpanRangesOf(current), ctx.Mode == "markdown", urlTails(normalized))
+			return FilterBoundaryEdits(current, edits, SpanRangesOf(current), ctx.Mode, urlTails(normalized))
 		},
 	)
 }
