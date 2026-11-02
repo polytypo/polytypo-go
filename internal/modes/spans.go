@@ -230,6 +230,66 @@ func createsReference(cp []rune, p, q int, w []rune) bool {
 	return left >= 0 && cp[left] == '&'
 }
 
+// isLabelCharacter reports whether c may sit inside a footnote label run: none of U+0020, '[' and
+// ']', and not a marker (markers are negative).
+func isLabelCharacter(c rune) bool {
+	return c >= 0 && c != ' ' && c != '[' && c != ']'
+}
+
+func isX(c rune) bool { return c == 'x' || c == 'X' }
+
+// skipSpaces returns the nearest index from i in direction step whose code point is not U+0020;
+// it may fall outside the array.
+func skipSpaces(cp []rune, i, step int) int {
+	for i >= 0 && i < len(cp) && cp[i] == ' ' {
+		i += step
+	}
+	return i
+}
+
+// at returns cp[i], or -3 (in no class) outside the array.
+func at(cp []rune, i int) rune {
+	if i < 0 || i >= len(cp) {
+		return -3
+	}
+	return cp[i]
+}
+
+// createsBracketShape is modes.md 3.4's bracket-shape rule (markdown only, spec 1.17.5): a
+// deletion, or a collapse of spaces to one, that joins a task-list marker or a footnote label.
+func createsBracketShape(cp []rune, p, q int, w []rune) bool {
+	isCollapse := len(w) == 1 && w[0] == ' '
+	if len(w) != 0 && !isCollapse {
+		return false
+	}
+	a := skipSpaces(cp, p-1, -1)
+	b := skipSpaces(cp, q+1, 1)
+	if isCollapse {
+		return at(cp, a) == '[' && at(cp, b) == ']'
+	}
+	if at(cp, a) == '[' && at(cp, b) == ']' {
+		return true
+	}
+	if at(cp, a) == '[' {
+		if at(cp, b) == '^' {
+			return true
+		}
+		return isX(at(cp, b)) && at(cp, skipSpaces(cp, b+1, 1)) == ']'
+	}
+	if at(cp, b) != ']' {
+		return false
+	}
+	if isX(at(cp, a)) && at(cp, skipSpaces(cp, a-1, -1)) == '[' {
+		return true
+	}
+	run := a
+	for run >= 0 && isLabelCharacter(at(cp, run)) {
+		run--
+	}
+	first := run + 1
+	return a-first >= 1 && at(cp, first) == '^' && at(cp, skipSpaces(cp, run, -1)) == '['
+}
+
 // space is U+0020, the one emitted code point whose meaning is positional (modes.md 3.4,
 // 5 item 2).
 const space = ' '
@@ -249,7 +309,7 @@ const space = ' '
 // Deletion at an edge is NOT restricted here — r > d is always false for a deletion, so this
 // filter never sees one; that case is spaces.md 3.2 step 4's own edge-as-NONE clause instead.
 //
-// mode selects the delimiter-neighbour (spec 1.17.2) and escape-and-reference (1.17.4) rules of modes.md 3.4, and guarded, indexed
+// mode selects the delimiter-neighbour (spec 1.17.2) and escape-and-reference (1.17.4) and bracket-shape (1.17.5) rules of modes.md 3.4, and guarded, indexed
 // like ranges, the terminator guard of modes.md 3.7.3.
 func FilterBoundaryEdits(cp []rune, edits []engine.Edit, ranges []SpanRange, mode string, guarded []bool) []engine.Edit {
 	out := make([]engine.Edit, 0, len(edits))
@@ -270,7 +330,8 @@ func FilterBoundaryEdits(cp []rune, edits []engine.Edit, ranges []SpanRange, mod
 		d := edit.End - edit.Start
 		r := len(edit.Replacement)
 		if mode == "markdown" && (changesDelimiterFlank(cp, p, q, edit.Replacement) ||
-			createsEscape(cp, p, q, edit.Replacement)) {
+			createsEscape(cp, p, q, edit.Replacement) ||
+			createsBracketShape(cp, p, q, edit.Replacement)) {
 			continue
 		}
 		if (mode == "markdown" || mode == "html") && createsReference(cp, p, q, edit.Replacement) {
