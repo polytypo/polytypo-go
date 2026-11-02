@@ -63,8 +63,8 @@ type ElisionClitics struct {
 	After  []string `json:"after"`
 }
 
-// Dash is a locale's dash field. Parenthetical/Range are one of "em-tight", "em-spaced",
-// "en-tight", "en-spaced", "none".
+// Dash is a locale's dash field. Range is one of "em-tight", "em-spaced", "en-tight",
+// "en-spaced", "none"; Parenthetical additionally allows "em-paired" (spec 1.18.0).
 type Dash struct {
 	Parenthetical string `json:"parenthetical"`
 	Range         string `json:"range"`

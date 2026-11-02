@@ -82,6 +82,9 @@ func dashesIsRomanFlanked(cp []rune, left, right int) bool {
 func scanDashes(cp []rune, locale spec.LocaleData, ctx engine.RuleContext) []engine.Edit {
 	var edits []engine.Edit
 	style := locale.Dash.Parenthetical
+	if style == "em-paired" {
+		return scanPairedDashes(cp)
+	}
 
 	for _, token := range dshFindTokens(cp) {
 		// A digit-flanked token is `ranges`' territory, never `dashes`' -- declined

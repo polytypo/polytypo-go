@@ -220,7 +220,7 @@ func dshIsSpacedStyle(style string) bool {
 
 // dshDashCodePoint is the target dash glyph for a style value.
 func dshDashCodePoint(style string) rune {
-	if style == "em-tight" || style == "em-spaced" {
+	if style == "em-tight" || style == "em-spaced" || style == "em-paired" {
 		return dshEmDash
 	}
 	return dshEnDash
@@ -346,14 +346,17 @@ func dshEffectiveNeighbour(cp []rune, from, step int) rune {
 // Shared because a `dashes` token becoming spaced can insert a space next to a `ranges` token's
 // digit run, and vice versa.
 func dshIsSpacingTransitionBlocked(cp []rune, left, right int) bool {
+	return dshIsSpacingTransitionBlockedLeft(cp, left) || dshIsSpacingTransitionBlockedRight(cp, right)
+}
+
+// dshIsSpacingTransitionBlockedLeft is the left half of T1, for a form that inserts a space on
+// one side only (`em-paired`).
+func dshIsSpacingTransitionBlockedLeft(cp []rune, left int) bool {
 	n := len(cp)
 
 	// Spec 1.3.0, position p1: step over a CLOSED-SYMBOL sitting between the token and the run.
 	if left >= 0 && left < n && dshIsClosedUpSymbol(cp[left]) && left > 0 && dshIsDigit(cp[left-1]) {
 		left--
-	}
-	if right >= 0 && right < n && dshIsClosedUpSymbol(cp[right]) && right+1 < n && dshIsDigit(cp[right+1]) {
-		right++
 	}
 
 	if left >= 0 && left < n && dshIsDigit(cp[left]) {
@@ -377,6 +380,16 @@ func dshIsSpacingTransitionBlocked(cp []rune, left, right int) bool {
 		if (one == dshSpace || dshIsNoBreakSpace(one)) && dshIsDashUnion(two) {
 			return true
 		}
+	}
+	return false
+}
+
+// dshIsSpacingTransitionBlockedRight is the right half of T1; see the Left variant.
+func dshIsSpacingTransitionBlockedRight(cp []rune, right int) bool {
+	n := len(cp)
+
+	if right >= 0 && right < n && dshIsClosedUpSymbol(cp[right]) && right+1 < n && dshIsDigit(cp[right+1]) {
+		right++
 	}
 
 	if right >= 0 && right < n && dshIsDigit(cp[right]) {
