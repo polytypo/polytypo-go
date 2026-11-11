@@ -15,7 +15,7 @@ import (
 )
 
 var ruleOrder = []string{
-	"spaces", "ellipsis", "ranges", "dashes", "hyphen", "quotes", "apostrophe", "symbols", "nbsp",
+	"spaces", "ellipsis", "ranges", "dashes", "hyphen", "quotes", "quote-punctuation", "apostrophe", "symbols", "nbsp",
 }
 
 func orderOf(ruleID string) int {

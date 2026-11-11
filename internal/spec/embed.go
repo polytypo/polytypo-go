@@ -52,6 +52,8 @@ type Quotes struct {
 	Secondary      QuotePair      `json:"secondary"`
 	ElisionIdioms  []ElisionIdiom `json:"elisionIdioms"`
 	ElisionClitics ElisionClitics `json:"elisionClitics"`
+	// PunctuationPlacement is quote-punctuation.md 2 (spec 1.21.0): "inside" or "none".
+	PunctuationPlacement string `json:"punctuationPlacement"`
 }
 
 // ElisionClitics is a locale's quotes.elisionClitics field (quotes.md 3.2's span-boundary elision
@@ -196,6 +198,10 @@ func LoadLocale(id string) (LocaleData, error) {
 	var data LocaleData
 	if err := readJSON(localesFS, "locales/"+id+".json", &data); err != nil {
 		return LocaleData{}, err
+	}
+	if p := data.Quotes.PunctuationPlacement; p != "inside" && p != "none" {
+		return LocaleData{}, fmt.Errorf(
+			"spec: locales/%s.json: quotes.punctuationPlacement must be \"inside\" or \"none\", got %q", id, p)
 	}
 	return data, nil
 }

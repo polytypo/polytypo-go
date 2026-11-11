@@ -60,7 +60,7 @@ func RuleOrder() ([]string, error) {
 	return ruleOrder, nil
 }
 
-// RuleDefaults returns rule id -> default enabled/disabled (only "ranges" defaults to false).
+// RuleDefaults returns rule id -> default enabled/disabled ("ranges" and "quote-punctuation" default to false).
 func RuleDefaults() (map[string]bool, error) {
 	orderOnce.Do(loadOrder)
 	if orderErr != nil {

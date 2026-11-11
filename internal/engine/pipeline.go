@@ -8,7 +8,7 @@ import (
 
 // ResolveRulePlan applies defaults plus opt-out overrides. rulesOption is opt-out only
 // (ARCHITECTURE.md section 7): it may only disable a default-on rule or enable the one
-// default-off rule ("ranges"). An unknown key raises CodeUnknownRule.
+// default-off rule ("ranges", "quote-punctuation"). An unknown key raises CodeUnknownRule.
 func ResolveRulePlan(rulesOption map[string]bool) ([]string, error) {
 	defaults, err := RuleDefaults()
 	if err != nil {

@@ -70,7 +70,7 @@ type Options struct {
 	// modes.
 	Dialect string
 	// Rules is an opt-out map keyed by rule id; false disables a default-on rule, true opts a
-	// default-off rule in (only "ranges" defaults off). Absence of a key always means "use that
+	// default-off rule in ("ranges" and "quote-punctuation" default off). Absence of a key always means "use that
 	// rule's own default," never "off."
 	Rules map[string]bool
 	// Keys is required iff Mode == "yaml": the mapping keys whose scalar values are
