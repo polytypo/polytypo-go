@@ -91,6 +91,8 @@ type NBSP struct {
 	AfterShortWords         []string `json:"afterShortWords"`
 	Abbreviations           []string `json:"abbreviations"`
 	BeforeUnits             []string `json:"beforeUnits"`
+	SpacedUnits             []string `json:"spacedUnits"`
+	ClosedUnits             []string `json:"closedUnits"`
 	BeforeNumber            []string `json:"beforeNumber"`
 	BeforeWord              []string `json:"beforeWord"`
 	AfterSymbols            []string `json:"afterSymbols"`

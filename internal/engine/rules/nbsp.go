@@ -122,7 +122,7 @@ type nbPrepared struct {
 	narrowBeforePunctuation []rune
 	shortWords              [][]rune
 	abbreviations           [][]rune
-	units                   [][]rune
+	units                   []nbUnitEntry
 	beforeNumber            [][]rune
 	beforeWord              [][]rune
 	symbols                 [][]rune
@@ -235,7 +235,7 @@ func prepareNbsp(locale spec.LocaleData, narrowTarget rune) nbPrepared {
 		narrowBeforePunctuation: narrowBeforePunctuation,
 		shortWords:              nbPrepareList(data.AfterShortWords),
 		abbreviations:           nbPrepareList(data.Abbreviations),
-		units:                   nbPrepareList(data.BeforeUnits),
+		units:                   nbPrepareUnits(data),
 		beforeNumber:            nbPrepareList(data.BeforeNumber),
 		beforeWord:              nbPrepareList(data.BeforeWord),
 		symbols:                 nbPrepareList(data.AfterSymbols),
@@ -276,6 +276,38 @@ func nbClaimInsertion(claims []*engine.Edit, index int, target rune) {
 		return
 	}
 	claims[index] = &engine.Edit{Start: index, End: index, Replacement: []rune{target}, RuleID: "nbsp"}
+}
+
+// nbUnitKind is which of N5's three lists an entry came from (nbsp.md 3.7).
+type nbUnitKind int
+
+const (
+	nbUnitBefore nbUnitKind = iota
+	nbUnitSpaced
+	nbUnitClosed
+)
+
+type nbUnitEntry struct {
+	w    []rune
+	kind nbUnitKind
+}
+
+// nbPrepareUnits merges beforeUnits, spacedUnits and closedUnits into one list, longest first, so
+// the longest entry wins across all three (nbsp.md 3.7 step 1). The sort is stable and the lists
+// are appended in a fixed order, so equal-length ties never depend on map or input order; an
+// entry is in at most one list, so a tie is between different strings and cannot both match.
+func nbPrepareUnits(data spec.NBSP) []nbUnitEntry {
+	var out []nbUnitEntry
+	for _, l := range []struct {
+		entries []string
+		kind    nbUnitKind
+	}{{data.BeforeUnits, nbUnitBefore}, {data.SpacedUnits, nbUnitSpaced}, {data.ClosedUnits, nbUnitClosed}} {
+		for _, e := range l.entries {
+			out = append(out, nbUnitEntry{w: []rune(e), kind: l.kind})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return len(out[i].w) > len(out[j].w) })
+	return out
 }
 
 type nbMatcher func(cp []rune, a int, w []rune) bool
@@ -478,40 +510,186 @@ func nbAbbreviationsSubRule(cp []rune, prep nbPrepared, claims []*engine.Edit) {
 	}
 }
 
-// nbUnitsSubRule is N5 (nbsp.md 3.7, beforeUnits -> U+00A0). Converts an existing space; never
-// inserts one (§7.2).
+// nbNumberPrefix is the set of code points that may stand left of a number N5 inserts or deletes
+// beside (nbsp.md 3.7 step 5.1), besides NONE, SPACELIKE, OPENISH and SENTENCE-DASH.
+func nbNumberPrefix(cp rune) bool {
+	switch cp {
+	case 0x2B, 0xB1, 0xD7, 0x2212, 0x7E, 0x2248, 0x3C, 0x3E, 0x2060:
+		return true
+	default:
+		return false
+	}
+}
+
+// nbNumberStart is the start of the number whose last digit is at end, extended over a decimal or
+// thousands separator (nbsp.md 3.7 step 5.1).
+func nbNumberStart(cp []rune, end int) int {
+	b := end
+	for b-1 >= 0 && nbIsDigit(cp[b-1]) {
+		b--
+	}
+	for (nbspAt(cp, b-1) == 0x2C || nbspAt(cp, b-1) == nbFullStop) && nbIsDigit(nbspAt(cp, b-2)) {
+		b -= 2
+		for b-1 >= 0 && nbIsDigit(cp[b-1]) {
+			b--
+		}
+	}
+	return b
+}
+
+func nbNumberStartIsClean(cp []rune, prep nbPrepared, b int) bool {
+	c := nbspAt(cp, b-1)
+	if c == engine.None || nbIsSpaceLike(c) || nbIsOpenish(prep, c) || nbIsSentenceDash(c) {
+		return true
+	}
+	if nbNumberPrefix(c) {
+		return true
+	}
+	if c != 0x2D {
+		return false
+	}
+	before := nbspAt(cp, b-2)
+	return before == engine.None || nbIsSpaceLike(before) || nbIsOpenish(prep, before)
+}
+
+// nbNearestBeyond is the first code point past a run of non-breaking-line spaces and joiners
+// (nbsp.md 3.7 step 5.3), walking from index from in direction step.
+func nbNearestBeyond(cp []rune, from, step int) rune {
+	for i := from; i >= 0 && i < len(cp); i += step {
+		c := cp[i]
+		if c == dshWordJoiner || (nbIsSpaceLike(c) && !nbIsBreak(c)) {
+			continue
+		}
+		return c
+	}
+	return engine.None
+}
+
+// nbIsMulOperand is nbsp.md 3.7 step 5.5: DIGIT [space] MUL-LETTER [space] immediately before the
+// number start b, i.e. the number is the right operand of a multiplication chain.
+func nbIsMulOperand(cp []rune, b int) bool {
+	isSp := func(c rune) bool { return c == nbSpace || c == nbNBSP || c == nbNNBSP }
+	i := b - 1
+	if isSp(nbspAt(cp, i)) {
+		i--
+	}
+	switch nbspAt(cp, i) {
+	case 0x78, 0x58, 0x445, 0x425:
+	default:
+		return false
+	}
+	i--
+	if isSp(nbspAt(cp, i)) {
+		i--
+	}
+	return nbIsDigit(nbspAt(cp, i))
+}
+
+// nbUnitsSubRule is N5 (nbsp.md 3.7). beforeUnits converts an existing space, spacedUnits
+// converts and inserts, closedUnits deletes. The longest entry across the three lists wins at a.
 func nbUnitsSubRule(cp []rune, prep nbPrepared, claims []*engine.Edit) {
 	if len(prep.units) == 0 {
 		return
 	}
 	for a := 0; a < len(cp); a++ {
-		w, ok := nbLongestMatch(prep.units, cp, a, nbMatchExact)
-		if !ok {
+		var entry *nbUnitEntry
+		for i := range prep.units {
+			if nbMatchExact(cp, a, prep.units[i].w) {
+				entry = &prep.units[i]
+				break
+			}
+		}
+		if entry == nil {
 			continue
 		}
-		k := len(w)
+		k := len(entry.w)
 		if nbIsAlnum(nbspAt(cp, a+k)) {
 			continue
 		}
 		left := nbspAt(cp, a-1)
-		if left == nbNBSP {
+
+		if entry.kind == nbUnitBefore {
+			if left != nbSpace {
+				continue // NBSP is already correct
+			}
+			if !nbIsDigit(nbspAt(cp, a-2)) {
+				continue
+			}
+			b := a - 2
+			for b-1 >= 0 && nbIsDigit(cp[b-1]) {
+				b--
+			}
+			// The letter guard: "H2 O", "A4", "MP3" are not measurements.
+			if engine.IsLetter(nbspAt(cp, b-1)) {
+				continue
+			}
+			nbClaimConversion(claims, a-1, nbNBSP)
+			continue
+		}
+
+		isClosed := entry.kind == nbUnitClosed
+		isSeparated := left == nbSpace || left == nbNBSP || (isClosed && left == nbNNBSP)
+		isTouching := nbIsDigit(left)
+		if !isSeparated && !(isTouching && !isClosed) {
+			continue
+		}
+		if !isClosed && left == nbNBSP {
 			continue // already correct
 		}
-		if left != nbSpace {
+		end := a - 1
+		if isSeparated {
+			end = a - 2
+		}
+		if !nbIsDigit(nbspAt(cp, end)) {
 			continue
 		}
-		if !nbIsDigit(nbspAt(cp, a-2)) {
-			continue
-		}
-		b := a - 2
+		b := end
 		for b-1 >= 0 && nbIsDigit(cp[b-1]) {
 			b--
 		}
-		// The letter guard: "H2 O", "A4", "MP3" are not measurements.
 		if engine.IsLetter(nbspAt(cp, b-1)) {
 			continue
 		}
-		nbClaimConversion(claims, a-1, nbNBSP)
+
+		// Converting an existing space keeps beforeUnits' behaviour; the guards below protect
+		// only what N5 would otherwise insert or delete (step 5).
+		if !isClosed && isSeparated {
+			if left == nbSpace {
+				nbClaimConversion(claims, a-1, nbNBSP)
+			}
+			continue
+		}
+		start := nbNumberStart(cp, end)
+		if !nbNumberStartIsClean(cp, prep, start) {
+			continue
+		}
+		// G-R: a closed-up symbol beside a dash decides whether ranges and dashes read the token
+		// as a range; editing the space would change that verdict on the next pass (step 5.3).
+		if dshIsClosedUpSymbol(entry.w[0]) &&
+			(dshIsDashUnion(nbNearestBeyond(cp, start-1, -1)) || dshIsDashUnion(nbNearestBeyond(cp, a+k, 1))) {
+			continue
+		}
+		if !isClosed && nbIsMulOperand(cp, start) {
+			continue
+		}
+		next := nbspAt(cp, a+k)
+		if next == 0x2D || next == 0x2011 || next == 0x5F {
+			continue
+		}
+		if next == nbFullStop && nbIsAlnum(nbspAt(cp, a+k+1)) {
+			continue
+		}
+
+		if isClosed {
+			if next == nbSpace && nbIsDigit(nbspAt(cp, a+k+1)) {
+				continue
+			}
+			if claims[a-1] == nil {
+				claims[a-1] = &engine.Edit{Start: a - 1, End: a, Replacement: nil, RuleID: "nbsp"}
+			}
+		} else {
+			nbClaimInsertion(claims, a, nbNBSP)
+		}
 	}
 }
 
