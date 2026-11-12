@@ -17,9 +17,10 @@ func TestMarkdownSmoke(t *testing.T) {
 		// <b> is not in the HTML skip list (only code/pre/kbd/samp/var/script/style/textarea/
 		// svg/math are), so its content is processable prose like any other inline raw HTML —
 		// this only proves the html-tag-stack correctly treats <b>/</b> as ordinary boundaries,
-		// not that <b> content is skipped.
+		// not that <b> content is skipped. The "\n" after </div> is a whitespace-only text node with a
+		// line break, which modes.md 3.6 (1.23.0) no longer makes a span.
 		{"raw html", "<div class=\"x\">\n  Body \"text\" inside.\n</div>\n\nAlso <b>\"kept\"</b> outside \"here\".\n",
-			[]string{"\n  Body \"text\" inside.\n", "\n", "Also ", "\"kept\"", " outside \"here\"."}},
+			[]string{"\n  Body \"text\" inside.\n", "Also ", "\"kept\"", " outside \"here\"."}},
 		{"indented code excluded", "paragraph\n\n    indented code\n", []string{"paragraph"}},
 	}
 	for _, c := range cases {

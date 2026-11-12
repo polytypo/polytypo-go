@@ -91,6 +91,22 @@ func isHexDigit(b byte) bool {
 func isASCIIAlpha(b byte) bool        { return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') }
 func isASCIIAlphaNumeric(b byte) bool { return isASCIIAlpha(b) || isASCIIDigit(b) }
 
+// isLineBreakWhitespace reports a text node made only of HTML whitespace that holds a line
+// terminator; modes.md 3.6 skips it so the gap test sees the line break between its neighbours.
+func isLineBreakWhitespace(raw []byte) bool {
+	hasBreak := false
+	for _, b := range raw {
+		switch b {
+		case '\n', '\f', '\r':
+			hasBreak = true
+		case '\t', ' ':
+		default:
+			return false
+		}
+	}
+	return hasBreak
+}
+
 func lastStackIndex(stack []string, tag string) int {
 	for i := len(stack) - 1; i >= 0; i-- {
 		if stack[i] == tag {
@@ -154,7 +170,7 @@ func HTMLSpans(source string) ([]Span, error) {
 				// skip-depth effect regardless of the tag's identity, since there is no
 				// subsequent content inside it to skip.
 			case html.TextToken:
-				if skipDepth == 0 && rawLen > 0 {
+				if skipDepth == 0 && rawLen > 0 && !isLineBreakWhitespace(raw) {
 					refs := findEntityRefs(raw)
 					cursor := 0
 					for _, ref := range refs {
