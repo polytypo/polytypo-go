@@ -9,13 +9,25 @@ import (
 	"github.com/polytypo/polytypo-go/internal/engine"
 )
 
-// skippedElements is spec/rules/modes.md 3.6, exhaustive and CLOSED: extending it is a spec
+// skippedElementNames is spec/rules/modes.md 3.6, exhaustive and CLOSED: extending it is a spec
 // change, not an implementation decision. svg/math are here because in MathML a quotation mark,
 // a hyphen and a prime are operators and identifiers — substituting a curly glyph changes what
-// the expression means.
-var skippedElements = map[string]bool{
-	"code": true, "pre": true, "kbd": true, "samp": true, "var": true,
-	"script": true, "style": true, "textarea": true, "svg": true, "math": true,
+// the expression means. The order is the spec's.
+var skippedElementNames = []string{
+	"code", "pre", "kbd", "samp", "var", "script", "style", "textarea", "svg", "math",
+}
+
+var skippedElements = func() map[string]bool {
+	set := make(map[string]bool, len(skippedElementNames))
+	for _, name := range skippedElementNames {
+		set[name] = true
+	}
+	return set
+}()
+
+// SkippedElements returns a copy of the element names html mode skips, in spec order.
+func SkippedElements() []string {
+	return append([]string(nil), skippedElementNames...)
 }
 
 // voidElements never get pushed onto the element stack, since an author is not required to close

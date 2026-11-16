@@ -114,6 +114,13 @@ func resolveMode(mode string) (string, error) {
 	}
 }
 
+// SkippedElements returns the HTML elements whose whole subtree html mode leaves alone, as
+// lowercase names in spec order (spec/rules/modes.md 3.6). Each call returns a fresh slice, so a
+// caller cannot change the list the mode uses.
+func SkippedElements() []string {
+	return modes.SkippedElements()
+}
+
 // Transform applies polytypo's rule pipeline to input and returns the result.
 //
 // Pure: no I/O, no environment, no clock, no globals, no filesystem, no network, no

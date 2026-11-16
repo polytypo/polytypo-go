@@ -64,6 +64,11 @@ out, err := polytypo.Transform(`<a title="test... wait">Wait... she said "go on.
 // (the attribute value's straight quotes and ellipsis are untouched; only the text content is)
 ```
 
+`html` mode leaves ten elements alone, with everything inside them: `code`, `pre`, `kbd`, `samp`,
+`var`, `script`, `style`, `textarea`, `svg` and `math`. If you walk a document with a parser of your
+own, call `polytypo.SkippedElements()` instead of copying the names; it returns a fresh slice on
+each call.
+
 `Locale` has no default anywhere and must always be set explicitly — there is no silent fallback
 to English. `Mode` defaults to `"text"` if left empty.
 
