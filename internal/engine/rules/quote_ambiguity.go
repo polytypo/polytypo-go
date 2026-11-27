@@ -181,7 +181,7 @@ func qaComputeIdiomMatchedIndices(cp []rune, idioms []spec.ElisionIdiom) map[int
 
 	for i := 0; i < n; i++ {
 		g := cp[i]
-		if !qaNarrow[g] {
+		if !qaIsNarrow(g) {
 			continue
 		}
 
@@ -199,7 +199,7 @@ func qaComputeIdiomMatchedIndices(cp []rune, idioms []spec.ElisionIdiom) map[int
 			if !qaElidedMatches(cp, i+1, idiom.elided) {
 				continue
 			}
-			if !qaNarrow[cp[j]] {
+			if !qaIsNarrow(cp[j]) {
 				continue
 			}
 
@@ -235,7 +235,7 @@ func qaComputeAmbiguousShapeIndices(cp []rune) map[int]struct{} {
 	n := len(cp)
 
 	for i := 0; i < n; i++ {
-		if !qaNarrow[qaAt(cp, i)] {
+		if !qaIsNarrow(qaAt(cp, i)) {
 			continue
 		}
 
@@ -250,7 +250,7 @@ func qaComputeAmbiguousShapeIndices(cp []rune) map[int]struct{} {
 		}
 
 		j := i + 2
-		if !qaNarrow[qaAt(cp, j)] {
+		if !qaIsNarrow(qaAt(cp, j)) {
 			continue
 		}
 
@@ -289,7 +289,7 @@ func qaComputeSpanBoundaryVetoIndices(cp []rune, clitics spec.ElisionClitics) ma
 	after := qaCompileClitics(clitics.After)
 
 	for i := range cp {
-		if !qaNarrow[cp[i]] {
+		if !qaIsNarrow(cp[i]) {
 			continue
 		}
 		if len(after) > 0 && qaAt(cp, i-1) == engine.Marker && qaRunMatches(cp, i, 1, after) {
@@ -345,6 +345,14 @@ func qaRunMatches(cp []rune, i int, dir int, entries [][]rune) bool {
 		if same {
 			return true
 		}
+	}
+	return false
+}
+
+func qaIsNarrow(cp rune) bool {
+	switch cp {
+	case 0x27, 0x2018, 0x2019, 0x201A, 0x201B, 0x2039, 0x203A:
+		return true
 	}
 	return false
 }

@@ -107,7 +107,10 @@ func hyphenMatchesAt(cp []rune, a int, w []rune) bool {
 	if a+len(w) > len(cp) {
 		return false
 	}
-	for j, p := range w {
+	// The first position is checked last: its case leniency costs a table lookup, and most
+	// candidates are already rejected by a later position.
+	for j := len(w) - 1; j >= 0; j-- {
+		p := w[j]
 		c := cp[a+j]
 		if p == hyphenHY {
 			if !hyphenIsHyphenish(c) {

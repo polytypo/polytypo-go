@@ -331,16 +331,13 @@ func nbMatchFirstCharLenient(cp []rune, a int, w []rune) bool {
 	if len(w) == 0 || a+len(w) > len(cp) {
 		return false
 	}
-	head := cp[a]
-	if head != w[0] && head != engine.SimpleUppercase(w[0]) {
-		return false
-	}
 	for j := 1; j < len(w); j++ {
 		if cp[a+j] != w[j] {
 			return false
 		}
 	}
-	return true
+	head := cp[a]
+	return head == w[0] || head == engine.SimpleUppercase(w[0])
 }
 
 // nbMatchSpaceLenient is nbsp.md 3.6 step 1: exact except that a pattern U+0020 also matches an
@@ -585,20 +582,35 @@ func nbIsMulOperand(cp []rune, b int) bool {
 	return nbIsDigit(nbspAt(cp, i))
 }
 
+// nbIndexUnits buckets the (longest-first) unit list by first code point; each bucket keeps the
+// list order, so the first match in a bucket is the first match in the whole list.
+func nbIndexUnits(units []nbUnitEntry) map[rune][]int {
+	byFirst := make(map[rune][]int)
+	for i := range units {
+		first := units[i].w[0]
+		byFirst[first] = append(byFirst[first], i)
+	}
+	return byFirst
+}
+
+func nbUnitAt(cp []rune, a int, units []nbUnitEntry, index map[rune][]int) *nbUnitEntry {
+	for _, i := range index[cp[a]] {
+		if nbMatchExact(cp, a, units[i].w) {
+			return &units[i]
+		}
+	}
+	return nil
+}
+
 // nbUnitsSubRule is N5 (nbsp.md 3.7). beforeUnits converts an existing space, spacedUnits
 // converts and inserts, closedUnits deletes. The longest entry across the three lists wins at a.
 func nbUnitsSubRule(cp []rune, prep nbPrepared, claims []*engine.Edit) {
 	if len(prep.units) == 0 {
 		return
 	}
+	index := nbIndexUnits(prep.units)
 	for a := 0; a < len(cp); a++ {
-		var entry *nbUnitEntry
-		for i := range prep.units {
-			if nbMatchExact(cp, a, prep.units[i].w) {
-				entry = &prep.units[i]
-				break
-			}
-		}
+		entry := nbUnitAt(cp, a, prep.units, index)
 		if entry == nil {
 			continue
 		}

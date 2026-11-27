@@ -31,7 +31,7 @@ var qtWide = map[rune]bool{
 }
 
 func qtIsQuoteMark(cp rune) bool {
-	return qtWide[cp] || qaNarrow[cp]
+	return qtIsWide(cp) || qaIsNarrow(cp)
 }
 
 func qtIsDigit(cp rune) bool {
@@ -238,7 +238,7 @@ func qtCollectCandidates(cp []rune, skip qtSkipSets, idioms []spec.ElisionIdiom,
 		// Medial-elision veto (quotes.md 3.2), NARROW marks only, literal reads: don't, l'été,
 		// O'Brien, 1990's — and, on a second pipeline pass, don't with U+2019, because apostrophe
 		// has converted the mark and U+2019 is also NARROW.
-		if qaNarrow[g] && lLit != engine.None && rLit != engine.None && qtIsAlnum(lLit) && qtIsAlnum(rLit) {
+		if qaIsNarrow(g) && lLit != engine.None && rLit != engine.None && qtIsAlnum(lLit) && qtIsAlnum(rLit) {
 			canOpen = false
 			canClose = false
 		}
@@ -265,7 +265,7 @@ func qtCollectCandidates(cp []rune, skip qtSkipSets, idioms []spec.ElisionIdiom,
 		}
 
 		if canOpen || canClose {
-			candidates = append(candidates, qtCandidate{index: i, wide: qtWide[g], canOpen: canOpen, canClose: canClose})
+			candidates = append(candidates, qtCandidate{index: i, wide: qtIsWide(g), canOpen: canOpen, canClose: canClose})
 		}
 	}
 
@@ -559,4 +559,12 @@ func scanQuotes(cp []rune, locale spec.LocaleData, ctx engine.RuleContext) []eng
 	}
 
 	return qtEmit(cp, accepted, locale)
+}
+
+func qtIsWide(cp rune) bool {
+	switch cp {
+	case 0x22, 0xAB, 0xBB, 0x201C, 0x201D, 0x201E, 0x201F, 0x301D, 0x301E, 0x301F:
+		return true
+	}
+	return false
 }
