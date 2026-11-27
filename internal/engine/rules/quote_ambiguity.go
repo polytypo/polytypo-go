@@ -27,23 +27,6 @@ const (
 	qaUpperN = rune(0x4E)
 )
 
-// qaNarrow is quotes.md 3.1 NARROW — every glyph an elision mark may appear as across pipeline
-// passes (straight, or already curled by an earlier pass). Shared with quotes.go so the two rules
-// cannot define two slightly different NARROW sets. For the universal medial-n veto, matching the
-// whole class is an IDEMPOTENCY obligation rather than a preference: its marks are converted to
-// U+2019 by apostrophe, so a straight-ASCII-only predicate would not recognise its own output and
-// pass 2 would pair `rock ’n’ roll` as an ordinary NARROW quotation on the next run — measured as
-// `rock «n» roll` in ru and `rock ”n” roll` in fi.
-var qaNarrow = map[rune]bool{
-	0x27:   true,
-	0x2018: true,
-	0x2019: true,
-	0x201A: true,
-	0x201B: true,
-	0x2039: true,
-	0x203A: true,
-}
-
 // qaInlineSpace is quotes.md 3.1 INLINE-SPACE, deliberately excluding BREAK/Marker/LineMarker so
 // this shape never crosses a line or span boundary (modes.md 3.3) — the same anchor the existing
 // elisionIdioms matcher already uses.
@@ -349,6 +332,13 @@ func qaRunMatches(cp []rune, i int, dir int, entries [][]rune) bool {
 	return false
 }
 
+// qaIsNarrow is quotes.md 3.1 NARROW — every glyph an elision mark may appear as across pipeline
+// passes (straight, or already curled by an earlier pass). Shared with quotes.go so the two rules
+// cannot define two slightly different NARROW sets. For the universal medial-n veto, matching the
+// whole class is an IDEMPOTENCY obligation rather than a preference: its marks are converted to
+// U+2019 by apostrophe, so a straight-ASCII-only predicate would not recognise its own output and
+// pass 2 would pair `rock ’n’ roll` as an ordinary NARROW quotation on the next run — measured as
+// `rock «n» roll` in ru and `rock ”n” roll` in fi.
 func qaIsNarrow(cp rune) bool {
 	switch cp {
 	case 0x27, 0x2018, 0x2019, 0x201A, 0x201B, 0x2039, 0x203A:

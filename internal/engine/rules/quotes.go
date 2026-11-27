@@ -14,20 +14,16 @@ import (
 // passes plus an emit; no backtracking inside a pass, no regular expression, no native-string
 // indexing (ARCHITECTURE.md 4.1, 4.2).
 
-// qtWide is quotes.md 3.1 WIDE. NARROW is qaNarrow (quote_ambiguity.go), shared with apostrophe
-// so the two rules cannot define two slightly different NARROW sets. WIDE and NARROW are
-// disjoint and their union is QUOTEMARK.
-var qtWide = map[rune]bool{
-	0x22:   true,
-	0xAB:   true,
-	0xBB:   true,
-	0x201C: true,
-	0x201D: true,
-	0x201E: true,
-	0x201F: true,
-	0x301D: true,
-	0x301E: true,
-	0x301F: true,
+// qtIsWide is quotes.md 3.1 WIDE. NARROW is qaIsNarrow (quote_ambiguity.go), shared with
+// apostrophe so the two rules cannot define two slightly different NARROW sets. WIDE and NARROW
+// are disjoint and their union is QUOTEMARK. A switch rather than a map: this runs for every
+// code point of the input.
+func qtIsWide(cp rune) bool {
+	switch cp {
+	case 0x22, 0xAB, 0xBB, 0x201C, 0x201D, 0x201E, 0x201F, 0x301D, 0x301E, 0x301F:
+		return true
+	}
+	return false
 }
 
 func qtIsQuoteMark(cp rune) bool {
@@ -61,13 +57,14 @@ func qtIsSpacelike(cp rune) bool {
 // qtIsOpenish is quotes.md 3.1 OPENISH. QUOTEMARK is a member of both OPENISH and CLOSEISH, and
 // is exempt from canOpen's closeish rejection — Lemma A's entire mechanism (quotes.md 5) and the
 // reason a candidate's verdict never depends on which quote glyph its neighbour is. Do not
-// "simplify" this back to per-glyph lists. engine.Marker is a member too (modes.md 3.3).
+// "simplify" this back to per-glyph lists. engine.Marker is a member too (modes.md 3.3), and so
+// are U+00BF and U+00A1 for every locale (spec 1.33.0).
 func qtIsOpenish(cp rune) bool {
 	if cp == engine.Marker {
 		return true
 	}
 	switch cp {
-	case 0x28, 0x5B, 0x7B:
+	case 0x28, 0x5B, 0x7B, 0xBF, 0xA1:
 		return true
 	}
 	return qtIsQuoteMark(cp)
@@ -264,12 +261,73 @@ func qtCollectCandidates(cp []rune, skip qtSkipSets, idioms []spec.ElisionIdiom,
 			canClose = false
 		}
 
+		// Quoted-lone-mark veto (quotes.md 3.2, spec 1.33.0): '"' and "'" are a mention of the
+		// character, not a quotation.
+		if qtLoneMarkAround(cp, i, skip, true) || qtLoneMarkAround(cp, i, skip, false) {
+			canOpen = false
+			canClose = false
+		}
+
 		if canOpen || canClose {
 			candidates = append(candidates, qtCandidate{index: i, wide: qtIsWide(g), canOpen: canOpen, canClose: canClose})
 		}
 	}
 
 	return candidates
+}
+
+func qtIsInlineSpaceAt(cp []rune, k int) bool {
+	return k >= 0 && k < len(cp) && qaInlineSpace[cp[k]]
+}
+
+// qtMarkStep is next (forward) or prev (backward) of quotes.md 3.2's quoted-lone-mark veto: the
+// literal neighbour, except that a run of INLINE-SPACE is skipped where nbsp can insert one. It
+// returns -1 when the step leaves the array or would cross any other space.
+func qtMarkStep(cp []rune, a int, skip qtSkipSets, forward bool) int {
+	d, near, far := 1, skip.spaceRight, skip.spaceLeft
+	if !forward {
+		d, near, far = -1, skip.spaceLeft, skip.spaceRight
+	}
+	k := a + d
+	if near[cp[a]] {
+		for qtIsInlineSpaceAt(cp, k) {
+			k += d
+		}
+	} else if qtIsInlineSpaceAt(cp, k) {
+		k2 := k
+		for qtIsInlineSpaceAt(cp, k2) {
+			k2 += d
+		}
+		if k2 < 0 || k2 >= len(cp) || !far[cp[k2]] {
+			return -1
+		}
+		k = k2
+	}
+	if k < 0 || k >= len(cp) {
+		return -1
+	}
+	return k
+}
+
+func qtIsTypewriterIdentity(v rune) bool {
+	return v == 0x22 || v == 0x2019
+}
+
+func qtLoneMarkAround(cp []rune, i int, skip qtSkipSets, forward bool) bool {
+	gV1 := qtV1Identity(cp[i])
+	if !qtIsTypewriterIdentity(gV1) {
+		return false
+	}
+	m := qtMarkStep(cp, i, skip, forward)
+	if m < 0 {
+		return false
+	}
+	mV1 := qtV1Identity(cp[m])
+	if !qtIsTypewriterIdentity(mV1) || mV1 == gV1 {
+		return false
+	}
+	o := qtMarkStep(cp, m, skip, forward)
+	return o >= 0 && qtV1Identity(cp[o]) == gV1
 }
 
 // qtIsVacuous is quotes.md 3.3 vacuous(a, b). Vacuously true when b = a + 1.
@@ -439,16 +497,19 @@ func qtPairSetsEqual(a, b map[qtPair]bool) bool {
 // the re-run reproduces the accepted set exactly. Declination is simultaneous per round, and
 // when the intersection fails to shrink A, the pair with the greatest open index is forced out —
 // both clauses are normative, so two ports cannot disagree.
+// qtGateRoundsMax is GATE_ROUNDS_MAX (quotes.md 3.5), part of the contract.
+const qtGateRoundsMax = 8
+
 func qtCertify(cp []rune, initial []qtPair, locale spec.LocaleData, skip qtSkipSets) []qtPair {
 	accepted := append([]qtPair(nil), initial...)
-	// Each round accepts or strictly shrinks `accepted`; it is finite and ∅ accepts
-	// unconditionally, so the loop runs at most |A0| + 1 times (quotes.md 3.5). The bound below
-	// is a defensive safety net, not a normative one.
-	maxRounds := len(initial) + 2
-
-	for round := 0; round <= maxRounds; round++ {
+	// quotes.md 3.5: at most qtGateRoundsMax rounds; a round that is still not accepted at the
+	// cap accepts the empty set.
+	for round := 1; ; round++ {
 		if len(accepted) == 0 {
 			return accepted
+		}
+		if round > qtGateRoundsMax {
+			return nil
 		}
 
 		plan := qtComputeRenderPlan(cp, accepted, locale)
@@ -491,9 +552,6 @@ func qtCertify(cp []rune, initial []qtPair, locale spec.LocaleData, skip qtSkipS
 			accepted = survivors
 		}
 	}
-
-	// Unreachable given the termination argument; declines everything rather than looping.
-	return nil
 }
 
 // qtEmit is pass 5 (quotes.md 3.6). An edit whose replacement equals the span it replaces is
@@ -559,12 +617,4 @@ func scanQuotes(cp []rune, locale spec.LocaleData, ctx engine.RuleContext) []eng
 	}
 
 	return qtEmit(cp, accepted, locale)
-}
-
-func qtIsWide(cp rune) bool {
-	switch cp {
-	case 0x22, 0xAB, 0xBB, 0x201C, 0x201D, 0x201E, 0x201F, 0x301D, 0x301E, 0x301F:
-		return true
-	}
-	return false
 }

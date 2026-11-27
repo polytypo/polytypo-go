@@ -162,12 +162,12 @@ func TestAnalyzeReportsOnlyEnabledRules(t *testing.T) {
 	}
 
 	const ranges = "chapters 3-5"
-	if ids := ruleIDs(mustAnalyze(t, ranges, polytypo.Options{Locale: "en-US"})); slicesContains(ids, "ranges") {
-		t.Fatalf("reported ranges without it being turned on: %v", ids)
+	if ids := ruleIDs(mustAnalyze(t, ranges, polytypo.Options{Locale: "en-US", Rules: map[string]bool{"ranges": false}})); slicesContains(ids, "ranges") {
+		t.Fatalf("reported ranges after it was turned off: %v", ids)
 	}
-	turnedOn := mustAnalyze(t, ranges, polytypo.Options{Locale: "en-US", Rules: map[string]bool{"ranges": true}})
-	if !slicesContains(ruleIDs(turnedOn), "ranges") {
-		t.Fatalf("expected ranges once turned on, got %v", ruleIDs(turnedOn))
+	byDefault := mustAnalyze(t, ranges, polytypo.Options{Locale: "en-US"})
+	if !slicesContains(ruleIDs(byDefault), "ranges") {
+		t.Fatalf("expected ranges by default, got %v", ruleIDs(byDefault))
 	}
 }
 

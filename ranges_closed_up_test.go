@@ -98,7 +98,7 @@ func TestClosedUpSymbolT1Boundary(t *testing.T) {
 		{"en-US", "price--$50--drop", "price—$50—drop"},
 		{"de-DE", "Anstieg--50%--war", "Anstieg--50%--war"},
 		{"de-DE", "Anstieg--50--war", "Anstieg--50--war"},
-		{"en-US", "$15 - $20", "$15 - $20"},
+		{"en-US", "$15 - $20", "$15" + wj + "–" + wj + "$20"},
 		{"en-US", "$15 - €20", "$15—€20"},
 	}
 	for _, tc := range defaults {
